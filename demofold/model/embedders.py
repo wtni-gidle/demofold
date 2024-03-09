@@ -3,25 +3,26 @@ import torch.nn as nn
 from torch.nn import functional as F
 from typing import Tuple, Optional
 
-from ..utils.tensor_utils import expand_first_dims
+from ..utils.tensor_utils import expand_first_dims, add
 from .primitives import Linear, LayerNorm
 
 
-
+# 如果是soloseq，msa就是seq[..., None, :, :]
 class InputEmbedder(nn.Module):
     def __init__(
         self,
-        seq_dim: int, 
+        tf_dim: int,
         msa_dim: int,
         c_m: int,
         c_z: int,
         max_len_seq: int,
         no_pos_bins_1d: int,
         pos_wsize_2d: int,
+        **kwargs,
     ):
         """
         Args:
-            seq_dim:
+            tf_dim:
                 Final dimension of the target features
             msa_dim:
                 Final dimension of the MSA features
@@ -29,11 +30,16 @@ class InputEmbedder(nn.Module):
                 MSA embedding dimension
             c_z:
                 Pair embedding dimension
-            relpos_k:
-                Window size used in relative positional encoding
+            max_len_seq:
+                序列长度不能超过这个值
+            no_pos_bins_1d:
+                一维位置编码的维度
+            pos_wsize_2d:
+                二维位置编码的窗口大小
         """
         super().__init__()
-        self.seq_dim = seq_dim
+
+        self.tf_dim = tf_dim
         self.msa_dim = msa_dim
         self.c_m = c_m
         self.c_z = c_z
@@ -44,11 +50,11 @@ class InputEmbedder(nn.Module):
         self.pos_wsize_2d = pos_wsize_2d
         self.no_pos_bins_2d = 2 * self.pos_wsize_2d + 1
 
-        self.linear_seq_m = Linear(self.seq_dim, self.c_m)
+        self.linear_tf_m = Linear(self.tf_dim, self.c_m)
         self.linear_msa_m = Linear(self.msa_dim, self.c_m)
         self.linear_pos_1d = Linear(self.no_pos_bins_1d, self.c_m)
-        self.linear_seq_z_i = Linear(self.seq_dim, self.c_z)
-        self.linear_seq_z_j = Linear(self.seq_dim, self.c_z)
+        self.linear_tf_z_i = Linear(self.tf_dim, self.c_z)
+        self.linear_tf_z_j = Linear(self.tf_dim, self.c_z)
         self.linear_pos_2d = Linear(self.no_pos_bins_2d, self.c_z)
 
         self.pos_1d = self.compute_pos_1d()
@@ -79,39 +85,50 @@ class InputEmbedder(nn.Module):
 
     def forward(
         self,
-        seq: torch.Tensor,
+        tf: torch.Tensor,
         msa: torch.Tensor,
+        inplace_safe: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        seq: [*, N_res, seq_dim]
+        tf: [*, N_res, tf_dim]
         msa: [*, N_seq, N_res, msa_dim]
 
         return:
         msa_emb: [*, N_seq, N_res, c_m]
         pair_emb: [*, N_res, N_res, c_z]
         """
-        n_res = seq.shape[-2]
+        n_res = tf.shape[-2]
         # device
-        self.pos_1d = self.pos_1d.to(seq.device)
-        self.pos_2d = self.pos_2d.to(seq.device)
+        self.pos_1d = self.pos_1d.to(tf.device)
+        self.pos_2d = self.pos_2d.to(tf.device)
+
         # [*, N_res, c_m]
-        seq_emb_m = self.linear_seq_m(seq)
+        tf_emb_m = self.linear_tf_m(tf)
         # [*, N_seq, N_res, c_m]
         msa_emb_m = self.linear_msa_m(msa)
         # [N_res, c_m] -> [*, N_seq, N_res, c_m]
         pos_enc_1d = self.linear_pos_1d(self.pos_1d[:n_res])
         pos_enc_1d = expand_first_dims(pos_enc_1d, len(msa.shape) - 2)
         # [*, N_seq, N_res, c_m]
-        msa_emb = msa_emb_m + seq_emb_m[..., None, :, :] + pos_enc_1d
+        msa_emb = msa_emb_m + tf_emb_m[..., None, :, :] + pos_enc_1d
 
         # [*, N_res, c_z]
-        seq_emb_i = self.linear_seq_z_i(seq)
-        seq_emb_j = self.linear_seq_z_j(seq)
+        tf_emb_i = self.linear_tf_z_i(tf)
+        tf_emb_j = self.linear_tf_z_j(tf)
         # [N_res, N_res, c_z] -> [*, N_res, N_res, c_z]
         pos_enc_2d = self.linear_pos_2d(self.pos_2d[:n_res, :n_res])
-        pos_enc_2d = expand_first_dims(pos_enc_2d, len(seq.shape) - 2)
+        pos_enc_2d = expand_first_dims(pos_enc_2d, len(tf.shape) - 2)
         # [*, N_res, N_res, c_z]
-        pair_emb = seq_emb_i[..., None, :, :] + seq_emb_j[..., None, :] + pos_enc_2d
+        pair_emb = add(
+            tf_emb_i[..., None, :, :],
+            tf_emb_j[..., None, :],
+            inplace=inplace_safe
+        )
+        pair_emb = add(
+            pair_emb,
+            pos_enc_2d,
+            inplace=inplace_safe
+        )
 
         return msa_emb, pair_emb
 
@@ -131,7 +148,8 @@ class SSEmbedder(nn.Module):
         """
         super().__init__()
         self.ss_dim = ss_dim
-        self.ss_linear = Linear(ss_dim, c_z)
+        self.c_z = c_z
+        self.ss_linear = Linear(self.ss_dim, self.c_z)
 
     def forward(self, ss: torch.Tensor) -> torch.Tensor:
         """
@@ -145,3 +163,63 @@ class SSEmbedder(nn.Module):
         return pair_emb_ss
 
 
+
+def fourier_encode_dist(
+    x: torch.Tensor, 
+    num_encodings: int = 20, 
+    include_self: bool = True
+):
+    # from https://github.com/lucidrains/egnn-pytorch/blob/main/egnn_pytorch/egnn_pytorch.py
+    x = x.unsqueeze(-1)
+    device, dtype, orig_x = x.device, x.dtype, x
+    scales = 2 ** torch.arange(num_encodings, device=device, dtype=dtype)
+    x = x / scales
+    x = torch.cat([x.sin(), x.cos()], dim=-1)
+    x = torch.cat((x, orig_x), dim=-1) if include_self else x
+    return x
+
+
+
+class RecyclingEmbedder(nn.Module):
+    def __init__(
+        self, 
+        c_m: int, 
+        c_z: int, 
+        dis_encoding_dim: int
+    ) -> None:
+        super().__init__()
+        self.c_m = c_m
+        self.c_z = c_z
+        self.dis_encoding_dim = dis_encoding_dim
+        
+        self.linear = Linear(self.dis_encoding_dim * 2 + 1, c_z)
+        self.layer_norm_m = LayerNorm(self.c_m)
+        self.layer_norm_z = LayerNorm(self.c_z)
+    
+    def forward(
+        self, 
+        m: torch.Tensor, 
+        pair: torch.Tensor, 
+        x: torch.Tensor, 
+        first: bool
+    ):
+        """
+        m: 
+            [*, N_res, c_m] First row of the MSA embedding.
+        pair: 
+            [*, N_res, N_res, c_z] Pair embedding.
+        x: 
+            [*, N_res, 3, 3] predicted 3-atom coordinates.
+
+        return:
+        pair_emb_ss: [*, N_res, N_res, c_z]
+        """
+        cb = x[..., -1, :]
+        dismap = (cb[..., None, :] - cb[..., None, :, :]).norm(dim = -1)
+        dis_z = fourier_encode_dist(dismap, self.dis_encoding_dim)
+        if first:
+            return 0, self.linear(dis_z)   
+        else:
+            m = self.layer_norm_m(m)
+            pair = self.layer_norm_z(pair) + self.linear(dis_z)
+            return m, pair

@@ -1,0 +1,334 @@
+from typing import Mapping, Dict
+
+import torch
+import torch.nn as nn
+
+from .primitives import Linear, LayerNorm
+from ..utils.precision_utils import is_fp16_enabled
+
+
+
+class DistogramHead(nn.Module):
+    """
+    Computes a distogram probability distribution.
+
+    For use in computation of distogram loss, subsection 1.9.8
+    """
+
+    def __init__(
+        self, 
+        c_z: int, 
+        no_bins: int
+    ):
+        """
+        Args:
+            c_z:
+                Input channel dimension
+            no_bins:
+                Number of distogram bins
+        """
+        super().__init__()
+
+        self.c_z = c_z
+        self.no_bins = no_bins
+
+        self.linear = Linear(self.c_z, self.no_bins, init="final")
+
+    def _forward(self, pair: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            pair:
+                [*, N_res, N_res, C_z] pair embedding
+        Returns:
+            [*, N_res, N_res, no_bins] distogram probability distribution
+        """
+        # [*, N_res, N_res, no_bins]
+        logits = self.linear(pair)
+        logits = logits + logits.transpose(-2, -3)
+        return logits
+    
+    def forward(self, pair: torch.Tensor) -> torch.Tensor: 
+        if is_fp16_enabled():
+            with torch.cuda.amp.autocast(enabled=False):
+                return self._forward(pair.float())
+        else:
+            return self._forward(pair)
+
+
+class MaskedMSAHead(nn.Module):
+    """
+    For use in computation of masked MSA loss, subsection 1.9.9
+    """
+
+    def __init__(
+        self, 
+        c_m: int, 
+        c_out: int, 
+        **kwargs
+    ):
+        """
+        Args:
+            c_m:
+                MSA channel dimension
+            c_out:
+                Output channel dimension
+        """
+        super().__init__()
+
+        self.c_m = c_m
+        self.c_out = c_out
+
+        self.linear = Linear(self.c_m, self.c_out, init="final")
+
+    def forward(self, msa: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            m:
+                [*, N_seq, N_res, C_m] MSA embedding
+        Returns:
+            [*, N_seq, N_res, C_out] reconstruction
+        """
+        # [*, N_seq, N_res, C_out]
+        logits = self.linear(msa)
+        return logits
+
+
+class AuxiliaryHeads(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+        self.distogram = DistogramHead(
+            **config["distogram"],
+        )
+
+        self.masked_msa = MaskedMSAHead(
+            **config["masked_msa"],
+        )
+
+        self.config = config
+    
+    def forward(self, outputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        aux_out = {}
+
+        distogram_logits = self.distogram(outputs["pair"])
+        aux_out["distogram_logits"] = distogram_logits
+
+        masked_msa_logits = self.masked_msa(outputs["msa"])
+        aux_out["masked_msa_logits"] = masked_msa_logits
+
+        return aux_out
+
+
+# geometry heads
+class ResnetBlock(nn.Module):
+    def __init__(self, c_hidden: int):
+        """
+        Args:
+            c_hidden:
+                Hidden channel dimension
+        """
+        super().__init__()
+
+        self.c_hidden = c_hidden
+
+        self.linear_1 = Linear(self.c_hidden, self.c_hidden, init="relu")
+        self.linear_2 = Linear(self.c_hidden, self.c_hidden, init="final")
+
+        self.relu = nn.ReLU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: [*, c_hidden]
+        return : [*, c_hidden]
+        """
+        x_initial = x
+
+        x = self.relu(x)
+        x = self.linear_1(x)
+        x = self.relu(x)
+        x = self.linear_2(x)
+
+        return x + x_initial
+
+
+class Geometry1DHead(nn.Module):
+    def __init__(
+        self, 
+        c_in: int, 
+        c_hidden: int, 
+        no_blocks: int,
+        no_bins: int
+    ):
+        """
+        Args:
+            c_in:
+                Input channel dimension
+            c_hidden:
+                Hidden channel dimension
+            no_blocks:
+                Number of resnet blocks
+            no_bins:
+                Number of bins
+        """
+        super().__init__()
+
+        self.c_in = c_in
+        self.c_hidden = c_hidden
+        self.no_blocks = no_blocks
+        self.no_bins = no_bins
+
+        self.linear_in = Linear(self.c_in, self.c_hidden)
+
+        self.layers = nn.ModuleList()
+        for _ in range(self.no_blocks):
+            layer = ResnetBlock(c_hidden=self.c_hidden)
+            self.layers.append(layer)
+
+        self.linear_out = Linear(self.c_hidden, self.no_bins)
+
+        self.relu = nn.ReLU()
+
+    def _forward(self, seq: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            pair:
+                [*, N_res, C_in] single embedding
+        Returns:
+            [*, N_res, no_bins] predicted angles
+        """
+        # NOTE: The ReLU's applied to the inputs are absent from the supplement
+        # pseudocode but present in the source. For maximal compatibility with
+        # the pretrained weights, I'm going with the source.
+
+        # [*, N_res, C_hidden]
+        seq = self.relu(seq)
+        seq = self.linear_in(seq)
+
+        for l in self.layers:
+            seq = l(seq)
+
+        seq = self.relu(seq)
+
+        # [*, N_res, no_bins]
+        logits = self.linear_out(seq)
+
+        return logits
+    
+    def forward(self, seq: torch.Tensor) -> torch.Tensor: 
+        if is_fp16_enabled():
+            with torch.cuda.amp.autocast(enabled=False):
+                return self._forward(seq.float())
+        else:
+            return self._forward(seq)
+
+
+class Geometry2DHead(nn.Module):
+    def __init__(
+        self, 
+        c_in: int, 
+        c_hidden: int, 
+        no_blocks: int,
+        no_bins: int,
+        symmetrize: bool = True
+    ):
+        """
+        Args:
+            c_in:
+                Input channel dimension
+            c_hidden:
+                Hidden channel dimension
+            no_blocks:
+                Number of resnet blocks
+            no_bins:
+                Number of bins
+        """
+        super().__init__()
+
+        self.c_in = c_in
+        self.c_hidden = c_hidden
+        self.no_blocks = no_blocks
+        self.no_bins = no_bins
+        self.symmetrize = symmetrize
+
+        self.linear_in = Linear(self.c_in, self.c_hidden)
+
+        self.layers = nn.ModuleList()
+        for _ in range(self.no_blocks):
+            layer = ResnetBlock(c_hidden=self.c_hidden)
+            self.layers.append(layer)
+
+        self.linear_out = Linear(self.c_hidden, self.no_bins)
+
+        self.relu = nn.ReLU()
+
+    def _forward(self, pair: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            pair:
+                [*, N_res, N_res, C_in] single embedding
+        Returns:
+            [*, N_res, N_res, no_bins] predicted angles
+        """
+        # NOTE: The ReLU's applied to the inputs are absent from the supplement
+        # pseudocode but present in the source. For maximal compatibility with
+        # the pretrained weights, I'm going with the source.
+
+        # [*, N_res, N_res, C_hidden]
+        pair = self.relu(pair)
+        pair = self.linear_in(pair)
+
+        for l in self.layers:
+            pair = l(pair)
+
+        pair = self.relu(pair)
+
+        # [*, N_res, N_res, no_bins]
+        logits = self.linear_out(pair)
+        if self.symmetrize:
+            logits = logits + logits.transpose(-2, -3)
+
+        return logits
+    
+    def forward(self, pair: torch.Tensor) -> torch.Tensor: 
+        if is_fp16_enabled():
+            with torch.cuda.amp.autocast(enabled=False):
+                return self._forward(pair.float())
+        else:
+            return self._forward(pair)
+
+
+class GeometryHeads(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.pp_head = Geometry2DHead(
+            **config["PP"]
+        )
+        self.cc_head = Geometry2DHead(
+            **config["CC"]
+        )
+        self.nn_head = Geometry2DHead(
+            **config["NN"]
+        )
+        self.pccp_head = Geometry2DHead(
+            **config["PCCP"]
+        )
+        self.pnnp_head = Geometry2DHead(
+            **config["PNNP"]
+        )
+        self.cnnc_head = Geometry2DHead(
+            **config["CNNC"]
+        )
+        
+        self.config = config
+    
+    def forward(self, outputs: Dict[torch.Tensor]) -> Dict[torch.Tensor]:
+        geom_outputs = {}
+        geom_outputs["PP_logits"] = self.pp_head(outputs["pair"])
+        geom_outputs["CC_logits"] = self.cc_head(outputs["pair"])
+        geom_outputs["NN_logits"] = self.nn_head(outputs["pair"])
+        geom_outputs["PCCP_logits"] = self.pccp_head(outputs["pair"])
+        geom_outputs["PNNP_logits"] = self.pnnp_head(outputs["pair"])
+        geom_outputs["CNNC_logits"] = self.cnnc_head(outputs["pair"])
+
+        return geom_outputs
+    

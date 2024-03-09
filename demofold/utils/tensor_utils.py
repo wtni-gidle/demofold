@@ -1,16 +1,15 @@
 import torch
-from typing import List
 from functools import partial
 import logging
-from typing import Tuple, List, Callable, Any, Dict, Sequence, Optional
+from typing import Tuple, List, Callable, Any, Dict, Sequence, Optional, Mapping
 
 import torch
 import torch.nn as nn
 
-def add(m1, m2, inplace):
+def add(m1: torch.Tensor, m2: torch.Tensor, inplace: bool):
     # The first operation in a checkpoint can't be in-place, but it's
     # nice to have in-place addition during inference. Thus...
-    if(not inplace):
+    if not inplace:
         m1 = m1 + m2
     else:
         m1 += m2
@@ -19,7 +18,7 @@ def add(m1, m2, inplace):
 
 def expand_first_dims(tensor: torch.Tensor, no_dims: int) -> torch.Tensor:
     new_shape = (1,) * no_dims + tensor.shape
-    return tensor.reshape(new_shape)
+    return tensor.view(new_shape)
 
 # 交换最后的几个维度。比如原来shape是[A,B,C,D]，inds是[1,2,0]，则交换后shape是[A,C,D,B]
 def permute_final_dims(tensor: torch.Tensor, inds: List[int]):
@@ -46,7 +45,7 @@ def pts_to_distogram(pts, min_bin=2.3125, max_bin=21.6875, no_bins=64):
     return torch.bucketize(dists, boundaries)
 
 
-def dict_multimap(fn, dicts):
+def dict_multimap(fn: Callable, dicts: Sequence[Mapping]) -> Mapping:
     first = dicts[0]
     new_dict = {}
     for k, v in first.items():
