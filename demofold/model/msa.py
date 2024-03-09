@@ -205,8 +205,8 @@ class MSAAttention(nn.Module):
 
     def forward(
         self, 
-        msa: torch.Tensor, 
-        pair: Optional[torch.Tensor] = None, 
+        m: torch.Tensor, 
+        z: Optional[torch.Tensor] = None, 
         mask: Optional[torch.Tensor] = None, 
         chunk_size: Optional[int] = None,
         use_memory_efficient_kernel: bool = False,
@@ -220,9 +220,9 @@ class MSAAttention(nn.Module):
         """
         什么都不使用则使用手动实现的attention
         Args:
-            msa:
+            m:
                 [*, N_seq, N_res, C_m] MSA embedding
-            pair:
+            z:
                 [*, N_res, N_res, C_z] pair embedding. Required only if
                 pair_bias is True
             mask:
@@ -235,27 +235,27 @@ class MSAAttention(nn.Module):
         """
         if _chunk_logits is not None:
             return self._chunked_msa_attn(
-                m=msa, z=pair, mask=mask, 
+                m=m, z=z, mask=mask, 
                 chunk_logits=_chunk_logits, 
                 checkpoint=_checkpoint_chunks,
                 inplace_safe=inplace_safe,
             )
        
         if use_flash:
-            assert pair is None
+            assert z is None
             biases = None
         else:    
-            msa, mask_bias, pair = self._prep_inputs(
-                msa, pair, mask, inplace_safe=inplace_safe
+            m, mask_bias, z = self._prep_inputs(
+                m, z, mask, inplace_safe=inplace_safe
             )
     
             biases = [mask_bias]
-            if pair is not None:
-                biases.append(pair)
+            if z is not None:
+                biases.append(z)
 
         if chunk_size is not None:
-            msa = self._chunk(
-                msa, 
+            m = self._chunk(
+                m, 
                 biases, 
                 chunk_size,
                 use_memory_efficient_kernel=use_memory_efficient_kernel,
@@ -265,10 +265,10 @@ class MSAAttention(nn.Module):
                 flash_mask=mask,
             )
         else:
-            msa = self.layer_norm_m(msa)
-            msa = self.mha(
-                q_x=msa, 
-                kv_x=msa, 
+            m = self.layer_norm_m(m)
+            m = self.mha(
+                q_x=m, 
+                kv_x=m, 
                 biases=biases,
                 use_memory_efficient_kernel=use_memory_efficient_kernel,
                 use_deepspeed_evo_attention=use_deepspeed_evo_attention,
@@ -277,7 +277,7 @@ class MSAAttention(nn.Module):
                 flash_mask=mask,
             )
 
-        return msa
+        return m
 
 
 class MSARowAttentionWithPairBias(MSAAttention):
@@ -350,16 +350,17 @@ class MSAColumnAttention(nn.Module):
         self.inf = inf
 
         self._msa_att = MSAAttention(
-            c_m,
-            c_hidden,
-            no_heads,
+            c_in=c_m,
+            c_hidden=c_hidden,
+            no_heads=no_heads,
             pair_bias=False,
             c_z=None,
             inf=inf,
         )
 
-    def forward(self, 
-        msa: torch.Tensor, 
+    def forward(
+        self, 
+        m: torch.Tensor, 
         mask: Optional[torch.Tensor] = None, 
         chunk_size: Optional[int] = None,
         use_deepspeed_evo_attention: bool = False,
@@ -378,12 +379,12 @@ class MSAColumnAttention(nn.Module):
                 cost of slower execution. Chunking is not performed by default.
         """ 
         # [*, N_res, N_seq, C_in]
-        msa = msa.transpose(-2, -3)
+        m = m.transpose(-2, -3)
         if mask is not None:
             mask = mask.transpose(-1, -2)
 
-        msa = self._msa_att(
-            msa, 
+        m = self._msa_att(
+            m, 
             mask=mask, 
             chunk_size=chunk_size,
             use_deepspeed_evo_attention=use_deepspeed_evo_attention,
@@ -392,11 +393,11 @@ class MSAColumnAttention(nn.Module):
         )
 
         # [*, N_seq, N_res, C_in]
-        msa = msa.transpose(-2, -3)
+        m = m.transpose(-2, -3)
         if mask is not None:
             mask = mask.transpose(-1, -2)
 
-        return msa
+        return m
 
 
 class MSATransition(nn.Module):
@@ -449,13 +450,13 @@ class MSATransition(nn.Module):
 
     def forward(
         self,
-        msa: torch.Tensor,
+        m: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
         chunk_size: Optional[int] = None,
     ) -> torch.Tensor:
         """
         Args:
-            msa:
+            m:
                 [*, N_seq, N_res, C_m] MSA activation
             mask:
                 [*, N_seq, N_res, C_m] MSA mask
@@ -465,15 +466,15 @@ class MSATransition(nn.Module):
         """
         # DISCREPANCY: DeepMind forgets to apply the MSA mask here.
         if mask is None:
-            mask = msa.new_ones(msa.shape[:-1])
+            mask = m.new_ones(m.shape[:-1])
 
         mask = mask.unsqueeze(-1)
 
         if chunk_size is not None:
-            msa = self._chunk(msa, mask, chunk_size)
+            m = self._chunk(m, mask, chunk_size)
         else:
-            msa = self._transition(msa, mask)
+            m = self._transition(m, mask)
 
-        return msa
+        return m
     
     

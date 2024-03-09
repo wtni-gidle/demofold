@@ -139,16 +139,14 @@ class OuterProductMean(nn.Module):
 
     def forward(
         self,
-        msa: torch.Tensor,
+        m: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
         chunk_size: Optional[int] = None,
         inplace_safe: bool = False,
     ) -> torch.Tensor:
         if is_fp16_enabled():
             with torch.cuda.amp.autocast(enabled=False):
-                return self._forward(msa.float(), mask, chunk_size, inplace_safe)
+                return self._forward(m.float(), mask, chunk_size, inplace_safe)
         else:
-            return self._forward(msa, mask, chunk_size, inplace_safe)
+            return self._forward(m, mask, chunk_size, inplace_safe)
         
-
-

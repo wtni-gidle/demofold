@@ -52,7 +52,7 @@ class BaseTriangleMultiplicativeUpdate(nn.Module, ABC):
             b = permute_final_dims(b, (2, 1, 0))
         else:
             a = permute_final_dims(a, (2, 1, 0))
-            b = permute_final_dims(b,  (2, 0, 1))
+            b = permute_final_dims(b, (2, 0, 1))
 
         if _inplace_chunk_size is not None:
             # To be replaced by torch vmap
@@ -395,7 +395,7 @@ class TriangleMultiplicativeUpdate(BaseTriangleMultiplicativeUpdate):
 
     def forward(
         self, 
-        pair: torch.Tensor, 
+        z: torch.Tensor, 
         mask: Optional[torch.Tensor] = None,
         inplace_safe: bool = False,
         _add_with_inplace: bool = False,
@@ -403,7 +403,7 @@ class TriangleMultiplicativeUpdate(BaseTriangleMultiplicativeUpdate):
     ) -> torch.Tensor:
         """
         Args:
-            pair:
+            z:
                 [*, N_res, N_res, C_z] input tensor
             mask:
                 [*, N_res, N_res] input mask
@@ -412,7 +412,7 @@ class TriangleMultiplicativeUpdate(BaseTriangleMultiplicativeUpdate):
         """
         if inplace_safe:
             x = self._inference_forward(
-                pair, 
+                z, 
                 mask, 
                 inplace_chunk_size=_inplace_chunk_size,
                 with_add=_add_with_inplace,
@@ -420,17 +420,17 @@ class TriangleMultiplicativeUpdate(BaseTriangleMultiplicativeUpdate):
             return x
 
         if mask is None:
-            mask = pair.new_ones(pair.shape[:-1])
+            mask = z.new_ones(z.shape[:-1])
 
         mask = mask.unsqueeze(-1)
         
-        pair = self.layer_norm_in(pair)
+        z = self.layer_norm_in(z)
         a = mask
-        a = a * self.sigmoid(self.linear_a_g(pair))
-        a = a * self.linear_a_p(pair)
+        a = a * self.sigmoid(self.linear_a_g(z))
+        a = a * self.linear_a_p(z)
         b = mask
-        b = b * self.sigmoid(self.linear_b_g(pair))
-        b = b * self.linear_b_p(pair)
+        b = b * self.sigmoid(self.linear_b_g(z))
+        b = b * self.linear_b_p(z)
 
         # Prevents overflow of torch.matmul in combine projections in
         # reduced-precision modes
@@ -449,7 +449,7 @@ class TriangleMultiplicativeUpdate(BaseTriangleMultiplicativeUpdate):
         del a, b
         x = self.layer_norm_out(x)
         x = self.linear_z(x)
-        g = self.sigmoid(self.linear_g(pair))
+        g = self.sigmoid(self.linear_g(z))
         x = x * g
 
         return x
@@ -552,7 +552,7 @@ class FusedTriangleMultiplicativeUpdate(BaseTriangleMultiplicativeUpdate):
 
     def forward(
         self,
-        pair: torch.Tensor,
+        z: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
         inplace_safe: bool = False,
         _add_with_inplace: bool = False,
@@ -560,7 +560,7 @@ class FusedTriangleMultiplicativeUpdate(BaseTriangleMultiplicativeUpdate):
     ) -> torch.Tensor:
         """
         Args:
-            pair:
+            z:
                 [*, N_res, N_res, C_z] input tensor
             mask:
                 [*, N_res, N_res] input mask
@@ -569,7 +569,7 @@ class FusedTriangleMultiplicativeUpdate(BaseTriangleMultiplicativeUpdate):
         """
         if inplace_safe:
             x = self._inference_forward(
-                pair,
+                z,
                 mask,
                 _inplace_chunk_size=_inplace_chunk_size,
                 with_add=_add_with_inplace,
@@ -577,14 +577,14 @@ class FusedTriangleMultiplicativeUpdate(BaseTriangleMultiplicativeUpdate):
             return x
 
         if mask is None:
-            mask = pair.new_ones(pair.shape[:-1])
+            mask = z.new_ones(z.shape[:-1])
 
         mask = mask.unsqueeze(-1)
 
-        pair = self.layer_norm_in(pair)
+        z = self.layer_norm_in(z)
         ab = mask
-        ab = ab * self.sigmoid(self.linear_ab_g(pair))
-        ab = ab * self.linear_ab_p(pair)
+        ab = ab * self.sigmoid(self.linear_ab_g(z))
+        ab = ab * self.linear_ab_p(z)
 
         a = ab[..., :self.c_hidden]
         b = ab[..., self.c_hidden:]
@@ -606,7 +606,7 @@ class FusedTriangleMultiplicativeUpdate(BaseTriangleMultiplicativeUpdate):
         del a, b
         x = self.layer_norm_out(x)
         x = self.linear_z(x)
-        g = self.sigmoid(self.linear_g(pair))
+        g = self.sigmoid(self.linear_g(z))
         x = x * g
 
         return x

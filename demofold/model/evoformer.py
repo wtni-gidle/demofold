@@ -82,7 +82,7 @@ class PairStack(nn.Module):
 
     def forward(
         self,
-        pair: torch.Tensor,
+        z: torch.Tensor,
         pair_mask: torch.Tensor,
         chunk_size: Optional[int] = None,
         use_deepspeed_evo_attention: bool = False,
@@ -101,38 +101,38 @@ class PairStack(nn.Module):
 
         # region: tri_mul_out
         tmu_update = self.tri_mul_out(
-            pair,
+            z,
             mask=pair_mask,
             inplace_safe=inplace_safe,
             _add_with_inplace=True,
         )
         if not inplace_safe:
-            pair = pair + self.ps_dropout_row_layer(tmu_update)
+            z = z + self.ps_dropout_row_layer(tmu_update)
         else:
-            pair = tmu_update
+            z = tmu_update
 
         del tmu_update
         # endregion
         # region: tri_mul_in
         tmu_update = self.tri_mul_in(
-            pair,
+            z,
             mask=pair_mask,
             inplace_safe=inplace_safe,
             _add_with_inplace=True,
         )
         if not inplace_safe:
-            pair = pair + self.ps_dropout_row_layer(tmu_update)
+            z = z + self.ps_dropout_row_layer(tmu_update)
         else:
-            pair = tmu_update
+            z = tmu_update
 
         del tmu_update
         # endregion
         # region: tri_att_start
-        pair = add(
-            pair,
+        z = add(
+            z,
             self.ps_dropout_row_layer(
                 self.tri_att_start(
-                    pair,
+                    z,
                     mask=pair_mask,
                     chunk_size=_attn_chunk_size,
                     use_memory_efficient_kernel=False,
@@ -145,15 +145,15 @@ class PairStack(nn.Module):
         )
         # endregion
         # region: tri_att_end
-        pair = pair.transpose(-2, -3)
+        z = z.transpose(-2, -3)
         if inplace_safe:
-            pair = pair.contiguous()
+            z = z.contiguous()
 
-        pair = add(
-            pair,
+        z = add(
+            z,
             self.ps_dropout_row_layer(
                 self.tri_att_end(
-                    pair,
+                    z,
                     mask=pair_mask.transpose(-1, -2),
                     chunk_size=_attn_chunk_size,
                     use_memory_efficient_kernel=False,
@@ -165,21 +165,21 @@ class PairStack(nn.Module):
             inplace=inplace_safe,
         )
 
-        pair = pair.transpose(-2, -3)
+        z = z.transpose(-2, -3)
         if inplace_safe:
-            pair = pair.contiguous()
+            z = z.contiguous()
         # endregion
         # region: pair_transition
-        pair = add(
-            pair,
+        z = add(
+            z,
             self.pair_transition(
-                pair, mask=pair_trans_mask, chunk_size=chunk_size,
+                z, mask=pair_trans_mask, chunk_size=chunk_size,
             ),
             inplace=inplace_safe,
         )
         # endregion
 
-        return pair
+        return z
 
 
 class MSAPairBlock(nn.Module, ABC):
@@ -246,36 +246,36 @@ class MSAPairBlock(nn.Module, ABC):
         _offload_inference: bool = False
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
-        msa, pair = input_tensors
+        m, z = input_tensors
 
         if _offload_inference and inplace_safe:
-            # msa: GPU, pair: CPU
-            del msa, pair
+            # m: GPU, z: CPU
+            del m, z
             assert (sys.getrefcount(input_tensors[1]) == 2)
             input_tensors[1] = input_tensors[1].cpu()
-            msa, pair = input_tensors
+            m, z = input_tensors
 
         opm = self.outer_product_mean(
-            msa, mask=msa_mask, chunk_size=chunk_size, inplace_safe=inplace_safe
+            m, mask=msa_mask, chunk_size=chunk_size, inplace_safe=inplace_safe
         )
 
         if _offload_inference and inplace_safe:
-            # msa: GPU, pair: GPU
-            del msa, pair
+            # m: GPU, z: GPU
+            del m, z
             assert (sys.getrefcount(input_tensors[0]) == 2)
             input_tensors[1] = input_tensors[1].to(opm.device)
-            msa, pair = input_tensors
+            m, z = input_tensors
 
-        pair = add(pair, opm, inplace=inplace_safe)
+        z = add(z, opm, inplace=inplace_safe)
         del opm
 
-        return msa, pair
+        return m, z
 
     @abstractmethod
     def forward(
         self,
-        msa: Optional[torch.Tensor],
-        pair: Optional[torch.Tensor],
+        m: Optional[torch.Tensor],
+        z: Optional[torch.Tensor],
         msa_mask: torch.Tensor,
         pair_mask: torch.Tensor,
         chunk_size: Optional[int] = None,
@@ -340,8 +340,8 @@ class EvoformerBlock(MSAPairBlock):
 
     def forward(
         self,
-        msa: Optional[torch.Tensor],
-        pair: Optional[torch.Tensor],
+        m: Optional[torch.Tensor],
+        z: Optional[torch.Tensor],
         msa_mask: torch.Tensor,
         pair_mask: torch.Tensor,
         chunk_size: Optional[int] = None,
@@ -364,14 +364,14 @@ class EvoformerBlock(MSAPairBlock):
             input_tensors = _offloadable_inputs
             del _offloadable_inputs
         else:
-            input_tensors = [msa, pair]
+            input_tensors = [m, z]
 
-        msa, pair = input_tensors
+        m, z = input_tensors
 
         if self.opm_first:
-            del msa, pair
+            del m, z
 
-            msa, pair = self._compute_opm(
+            m, z = self._compute_opm(
                 input_tensors=input_tensors,
                 msa_mask=msa_mask,
                 chunk_size=chunk_size,
@@ -379,12 +379,12 @@ class EvoformerBlock(MSAPairBlock):
                 _offload_inference=_offload_inference,
             )
 
-        msa = add(
-            msa,
+        m = add(
+            m,
             self.msa_dropout_layer(
                 self.msa_att_row(
-                    msa,
-                    pair=pair,
+                    m,
+                    z=z,
                     mask=msa_mask,
                     chunk_size=_attn_chunk_size,
                     use_memory_efficient_kernel=False,
@@ -396,19 +396,19 @@ class EvoformerBlock(MSAPairBlock):
         )
 
         if _offload_inference and inplace_safe:
-            # msa: GPU, pair: CPU
-            del msa, pair
+            # m: GPU, z: CPU
+            del m, z
             assert (sys.getrefcount(input_tensors[1]) == 2)
             input_tensors[1] = input_tensors[1].cpu()
             torch.cuda.empty_cache()
-            msa, pair = input_tensors
+            m, z = input_tensors
 
         # Specifically, column attention is not used in seqemb mode.
         if not self.no_column_attention:
-            msa = add(
-                msa,
+            m = add(
+                m,
                 self.msa_att_col(
-                    msa,
+                    m,
                     mask=msa_mask,
                     chunk_size=chunk_size,
                     use_deepspeed_evo_attention=use_deepspeed_evo_attention,
@@ -418,21 +418,21 @@ class EvoformerBlock(MSAPairBlock):
                 inplace=inplace_safe,
             )
 
-        msa = add(
-            msa,
+        m = add(
+            m,
             self.msa_transition(
-                msa, mask=msa_trans_mask, chunk_size=chunk_size,
+                m, mask=msa_trans_mask, chunk_size=chunk_size,
             ),
             inplace=inplace_safe,
         )
 
         if not self.opm_first:
             if not inplace_safe:
-                input_tensors = [msa, pair]
+                input_tensors = [m, z]
 
-            del msa, pair
+            del m, z
 
-            msa, pair = self._compute_opm(
+            m, z = self._compute_opm(
                 input_tensors=input_tensors,
                 msa_mask=msa_mask,
                 chunk_size=chunk_size,
@@ -441,21 +441,21 @@ class EvoformerBlock(MSAPairBlock):
             )
 
         if _offload_inference and inplace_safe:
-            # msa: CPU, pair: GPU
-            del msa, pair
+            # m: CPU, z: GPU
+            del m, z
             assert (sys.getrefcount(input_tensors[0]) == 2)
             device = input_tensors[0].device
             input_tensors[0] = input_tensors[0].cpu()
             input_tensors[1] = input_tensors[1].to(device)
-            msa, pair = input_tensors
+            m, z = input_tensors
 
         if not inplace_safe:
-            input_tensors = [msa, pair]
+            input_tensors = [m, z]
 
-        del msa, pair
+        del m, z
 
-        pair = self.pair_stack(
-            pair=input_tensors[1],
+        z = self.pair_stack(
+            z=input_tensors[1],
             pair_mask=pair_mask,
             chunk_size=chunk_size,
             use_deepspeed_evo_attention=use_deepspeed_evo_attention,
@@ -466,15 +466,15 @@ class EvoformerBlock(MSAPairBlock):
         )
 
         if _offload_inference and inplace_safe:
-            # msa: GPU, pair: GPU
-            device = pair.device
+            # m: GPU, z: GPU
+            device = z.device
             assert (sys.getrefcount(input_tensors[0]) == 2)
             input_tensors[0] = input_tensors[0].to(device)
-            msa, _ = input_tensors
+            m, _ = input_tensors
         else:
-            msa = input_tensors[0]
+            m = input_tensors[0]
 
-        return msa, pair
+        return m, z
 
 
 class EvoformerStack(nn.Module):
@@ -507,6 +507,7 @@ class EvoformerStack(nn.Module):
         eps: float,
         clear_cache_between_blocks: bool = False, 
         tune_chunk_size: bool = False,
+        **kwargs,
     ):
         """
         Args:
@@ -672,26 +673,26 @@ class EvoformerStack(nn.Module):
         )
 
         for b in blocks:
-            msa, pair = b(
+            m, z = b(
                 None, 
                 None, 
                 _offload_inference=True,
                 _offloadable_inputs=input_tensors,
             )
-            input_tensors[0] = msa
-            input_tensors[1] = pair
-            del msa, pair
+            input_tensors[0] = m
+            input_tensors[1] = z
+            del m, z
         
-        msa, pair = input_tensors
+        m, z = input_tensors
         
-        seq = self.linear(msa[..., 0, :, :])
+        s = self.linear(m[..., 0, :, :])
         
-        return msa, pair, seq
+        return m, z, s
 
     def forward(
         self,
-        msa: torch.Tensor,
-        pair: torch.Tensor,
+        m: torch.Tensor,
+        z: torch.Tensor,
         msa_mask: torch.Tensor,
         pair_mask: torch.Tensor,
         chunk_size: int,
@@ -703,9 +704,9 @@ class EvoformerStack(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
-            msa:
+            m:
                 [*, N_seq, N_res, C_m] MSA embedding
-            pair:
+            z:
                 [*, N_res, N_res, C_z] pair embedding
             msa_mask:
                 [*, N_seq, N_res] MSA mask
@@ -724,16 +725,16 @@ class EvoformerStack(nn.Module):
                 Whether to use FlashAttention where possible. Mutually 
                 exclusive with use_lma and use_deepspeed_evo_attention.
         Returns:
-            msa:
+            m:
                 [*, N_seq, N_res, C_m] MSA embedding
-            pair:
+            z:
                 [*, N_res, N_res, C_z] pair embedding
-            seq:
+            s:
                 [*, N_res, C_s] single embedding (or None if extra MSA stack)
         """ 
         blocks = self._prep_blocks(
-            m=msa,
-            z=pair,
+            m=m,
+            z=z,
             chunk_size=chunk_size,
             use_deepspeed_evo_attention=use_deepspeed_evo_attention,
             use_lma=use_lma,
@@ -748,13 +749,13 @@ class EvoformerStack(nn.Module):
         if not torch.is_grad_enabled():
             blocks_per_ckpt = None
         
-        msa, pair = checkpoint_blocks(
+        m, z = checkpoint_blocks(
             blocks,
-            args=(msa, pair),
+            args=(m, z),
             blocks_per_ckpt=blocks_per_ckpt,
         )
 
-        seq = self.linear(msa[..., 0, :, :])
+        s = self.linear(m[..., 0, :, :])
 
-        return msa, pair, seq
+        return m, z, s
 

@@ -132,8 +132,8 @@ class InvariantPointAttention(nn.Module):
 
     def forward(
         self,
-        seq: torch.Tensor,
-        pair: torch.Tensor,
+        s: torch.Tensor,
+        z: torch.Tensor,
         r: Rigid,
         mask: torch.Tensor,
         inplace_safe: bool = False,
@@ -142,9 +142,9 @@ class InvariantPointAttention(nn.Module):
     ) -> torch.Tensor:
         """
         Args:
-            seq:
+            s:
                 [*, N_res, C_s] single representation
-            pair:
+            z:
                 [*, N_res, N_res, C_z] pair representation
             r:
                 [*, N_res] transformation object
@@ -154,24 +154,24 @@ class InvariantPointAttention(nn.Module):
             [*, N_res, C_s] single representation update
         """
         if _offload_inference and inplace_safe:
-            pair = _z_reference_list
+            z = _z_reference_list
         else:
-            pair = [pair]
+            z = [z]
 
         #######################################
         # Generate scalar and point activations
         #######################################
         # [*, N_res, H * C_hidden]
-        q = self.linear_q(seq)
+        q = self.linear_q(s)
 
         # [*, N_res, H, C_hidden]
         q = q.view(q.shape[:-1] + (self.no_heads, -1))
 
         # [*, N_res, H, P_qk]
-        q_pts = self.linear_q_points(seq, r)
+        q_pts = self.linear_q_points(s, r)
 
         # [*, N_res, H * 2 * C_hidden]
-        kv = self.linear_kv(seq)
+        kv = self.linear_kv(s)
 
         # [*, N_res, H, 2 * C_hidden]
         kv = kv.view(kv.shape[:-1] + (self.no_heads, -1))
@@ -179,7 +179,7 @@ class InvariantPointAttention(nn.Module):
         # [*, N_res, H, C_hidden]
         k, v = torch.split(kv, self.c_hidden, dim=-1)
 
-        kv_pts = self.linear_kv_points(seq, r)
+        kv_pts = self.linear_kv_points(s, r)
 
         # [*, N_res, H, P_q/P_v, 3]
         k_pts, v_pts = torch.split(
@@ -190,11 +190,11 @@ class InvariantPointAttention(nn.Module):
         # Compute attention scores
         ##########################
         # [*, N_res, N_res, H]
-        b = self.linear_b(pair[0])
+        b = self.linear_b(z[0])
 
         if _offload_inference:
-            assert sys.getrefcount(pair[0]) == 2
-            pair[0] = pair[0].cpu()
+            assert sys.getrefcount(z[0]) == 2
+            z[0] = z[0].cpu()
 
         # [*, H, N_res, N_res]
         if is_fp16_enabled():
@@ -301,19 +301,19 @@ class InvariantPointAttention(nn.Module):
         o_pt = torch.unbind(o_pt, dim=-1)
 
         if _offload_inference:
-            pair[0] = pair[0].to(o_pt.device)
+            z[0] = z[0].to(o_pt.device)
 
         # [*, N_res, H, C_z]
-        o_pair = torch.matmul(a.transpose(-2, -3), pair[0].to(dtype=a.dtype))
+        o_pair = torch.matmul(a.transpose(-2, -3), z[0].to(dtype=a.dtype))
 
         # [*, N_res, H * C_z]
         o_pair = flatten_final_dims(o_pair, 2)
 
         # [*, N_res, C_s]
-        seq = self.linear_out(
+        s = self.linear_out(
             torch.cat(
                 (o, *o_pt, o_pt_norm, o_pair), dim=-1
-            ).to(dtype=pair[0].dtype)
+            ).to(dtype=z[0].dtype)
         )
 
-        return seq
+        return s

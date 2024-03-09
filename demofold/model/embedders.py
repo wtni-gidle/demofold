@@ -133,11 +133,13 @@ class InputEmbedder(nn.Module):
         return msa_emb, pair_emb
 
 
+
 class SSEmbedder(nn.Module):
     def __init__(
         self, 
         ss_dim: int, 
         c_z: int,
+        **kwargs,
     ):
         """
         Args:
@@ -199,27 +201,32 @@ class RecyclingEmbedder(nn.Module):
     def forward(
         self, 
         m: torch.Tensor, 
-        pair: torch.Tensor, 
+        z: torch.Tensor, 
         x: torch.Tensor, 
-        first: bool
-    ):
+        inplace_safe: bool = False,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         m: 
             [*, N_res, c_m] First row of the MSA embedding.
-        pair: 
+        z: 
             [*, N_res, N_res, c_z] Pair embedding.
         x: 
-            [*, N_res, 3, 3] predicted 3-atom coordinates.
+            [*, N_res, 3] predicted N coordinates
 
         return:
-        pair_emb_ss: [*, N_res, N_res, c_z]
+            m_update: [*, N_res, c_m]
+            z_update: [*, N_res, N_res, c_z]
         """
-        cb = x[..., -1, :]
-        dismap = (cb[..., None, :] - cb[..., None, :, :]).norm(dim = -1)
-        dis_z = fourier_encode_dist(dismap, self.dis_encoding_dim)
-        if first:
-            return 0, self.linear(dis_z)   
-        else:
-            m = self.layer_norm_m(m)
-            pair = self.layer_norm_z(pair) + self.linear(dis_z)
-            return m, pair
+        m_update = self.layer_norm_m(m)
+        z_update = self.layer_norm_z(z)
+        # dismap: [*, N_res, N_res]
+        dismap = (x[..., None, :] - x[..., None, :, :]).norm(dim = -1)
+        d_enc = fourier_encode_dist(dismap, self.dis_encoding_dim)
+
+        z_update = add(
+            z_update, 
+            self.linear(d_enc), 
+            inplace_safe
+        )
+
+        return m_update, z_update

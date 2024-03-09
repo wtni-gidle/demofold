@@ -29,7 +29,7 @@ class BackboneUpdate(nn.Module):
 
         self.linear = Linear(self.c_s, 6, init="final")
 
-    def forward(self, seq: torch.Tensor) -> torch.Tensor:
+    def forward(self, s: torch.Tensor) -> torch.Tensor:
         """
         Args:
             [*, N_res, C_s] single representation
@@ -37,7 +37,7 @@ class BackboneUpdate(nn.Module):
             [*, N_res, 6] update vector 
         """
         # [*, 6]
-        update = self.linear(seq)
+        update = self.linear(s)
 
         return update
 
@@ -55,17 +55,17 @@ class StructureModuleTransitionLayer(nn.Module):
 
         self.relu = nn.ReLU()
 
-    def forward(self, seq: torch.Tensor) -> torch.Tensor:
-        s_initial = seq
-        seq = self.linear_1(seq)
-        seq = self.relu(seq)
-        seq = self.linear_2(seq)
-        seq = self.relu(seq)
-        seq = self.linear_3(seq)
+    def forward(self, s: torch.Tensor) -> torch.Tensor:
+        s_initial = s
+        s = self.linear_1(s)
+        s = self.relu(s)
+        s = self.linear_2(s)
+        s = self.relu(s)
+        s = self.linear_3(s)
 
-        seq = seq + s_initial
+        s = s + s_initial
 
-        return seq
+        return s
     
 
 
@@ -90,14 +90,14 @@ class StructureModuleTransition(nn.Module):
         self.dropout = nn.Dropout(self.dropout_rate)
         self.layer_norm = LayerNorm(self.c)
 
-    def forward(self, seq: torch.Tensor) -> torch.Tensor:
+    def forward(self, s: torch.Tensor) -> torch.Tensor:
         for l in self.layers:
-            seq = l(seq)
+            s = l(s)
 
-        seq = self.dropout(seq)
-        seq = self.layer_norm(seq)
+        s = self.dropout(s)
+        s = self.layer_norm(s)
 
-        return seq
+        return s
     
 
 
@@ -232,55 +232,55 @@ class StructureModule(nn.Module):
         Returns:
             A dictionary of outputs
         """
-        seq = evoformer_output_dict["single"]
+        s = evoformer_output_dict["single"]
 
         if mask is None:
             # [*, N_res]
-            mask = seq.new_ones(seq.shape[:-1])
+            mask = s.new_ones(s.shape[:-1])
 
         # [*, N_res, C_s]
-        seq = self.layer_norm_s(seq)
+        s = self.layer_norm_s(s)
 
         # [*, N_res, N_res, C_z]
-        pair = self.layer_norm_z(evoformer_output_dict["pair"])
+        z = self.layer_norm_z(evoformer_output_dict["pair"])
 
         z_reference_list = None
         if _offload_inference:
             assert sys.getrefcount(evoformer_output_dict["pair"]) == 2
             evoformer_output_dict["pair"] = evoformer_output_dict["pair"].cpu()
-            z_reference_list = [pair]
-            pair = None
+            z_reference_list = [z]
+            z = None
 
         # [*, N_res, C_s]
         # s_initial = seq
-        seq = self.linear_in(seq)
+        s = self.linear_in(s)
 
         # [*, N]
         rigids = Rigid.identity(
-            seq.shape[:-1], 
-            seq.dtype, 
-            seq.device, 
+            s.shape[:-1], 
+            s.dtype, 
+            s.device, 
             self.training,
             fmt="quat",
         )
         outputs = []
         for i in range(self.no_blocks):
             # [*, N_res, C_s]
-            seq = seq + self.ipa(
-                seq, 
-                pair, 
+            s = s + self.ipa(
+                s, 
+                z, 
                 rigids, 
                 mask, 
                 inplace_safe=inplace_safe,
                 _offload_inference=_offload_inference, 
                 _z_reference_list=z_reference_list
             )
-            seq = self.ipa_dropout(seq)
-            seq = self.layer_norm_ipa(seq)
-            seq = self.transition(seq)
+            s = self.ipa_dropout(s)
+            s = self.layer_norm_ipa(s)
+            s = self.transition(s)
 
             # [*, N_res]
-            rigids = rigids.compose_q_update_vec(self.bb_update(seq))
+            rigids = rigids.compose_q_update_vec(self.bb_update(s))
 
             # To hew as closely as possible to AlphaFold, we convert our
             # quaternion-based transformations to rotation-matrix ones
@@ -307,22 +307,22 @@ class StructureModule(nn.Module):
             preds = {
                 "frames": scaled_rigids.to_tensor_7(),
                 "positions": pred_xyz,
-                "states": seq,
+                "states": s,
             }
 
             outputs.append(preds)
 
             rigids = rigids.stop_rot_gradient()
 
-        del pair, z_reference_list
+        del z, z_reference_list
 
         if _offload_inference:
             evoformer_output_dict["pair"] = (
-                evoformer_output_dict["pair"].to(seq.device)
+                evoformer_output_dict["pair"].to(s.device)
             )
 
         outputs = dict_multimap(torch.stack, outputs)
-        outputs["single"] = seq
+        outputs["single"] = s
 
         return outputs
     

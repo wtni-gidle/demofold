@@ -29,8 +29,8 @@ from ..utils.tensor_utils import (
 )
 
 
-DEFAULT_LMA_Q_CHUNK_SIZE=1024
-DEFAULT_LMA_KV_CHUNK_SIZE=4096
+DEFAULT_LMA_Q_CHUNK_SIZE = 1024
+DEFAULT_LMA_KV_CHUNK_SIZE = 4096
 SOFTPLUS_INVERSE_1 = 0.541324854612918
 
 
@@ -93,7 +93,7 @@ def gating_init_(weights):
 
 
 def normal_init_(weights):
-    nn.init.kaiming_normal_(weights, nonlinearity="linear")
+    nn.init.kaiming_normal_(weights, nonlinearity = "linear")
 
 
 def ipa_point_weights_init_(weights):
@@ -279,201 +279,58 @@ def _attention(
     return a
 
 
-def _deepspeed_evo_attn(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    biases: List[torch.Tensor],
+def _attention_chunked_trainable(
+    query, key, value, biases, chunk_size, chunk_dim, checkpoint, 
 ):
-    """""
-    Compute attention using the DeepSpeed DS4Sci_EvoformerAttention kernel.
-
-    Args:
-        q:
-            [*, H, Q, C_hidden] query data
-        k:
-            [*, H, K, C_hidden] key data
-        v:
-            [*, H, V, C_hidden] value data
-        biases:
-            List of biases that broadcast to [*, H, Q, K]
-    """
-
-    if not ds4s_is_installed:
+    if checkpoint and len(biases) > 2:
         raise ValueError(
-            "_deepspeed_evo_attn requires that DeepSpeed be installed "
-            "and that the deepspeed.ops.deepspeed4science package exists"
+            "Checkpointed version permits only permits two bias terms"
         )
 
-    def reshape_dims(x):
-        no_batch_dims = len(x.shape[:-3])
-        if no_batch_dims < 2:
-            return x.reshape(*((1,) * (2 - no_batch_dims) + x.shape))
-        if no_batch_dims > 2:
-            return x.reshape(*((x.shape[0], -1) + x.shape[-3:]))
-        return x
+    def _checkpointable_attention(q, k, v, b1, b2):
+        bs = [b for b in [b1, b2] if b is not None]
+        a = _attention(q, k, v, bs)
+        return a
 
-    # [*, Q/K, H, C_hidden]
-    q = q.transpose(-2, -3)
-    k = k.transpose(-2, -3)
-    v = v.transpose(-2, -3)
+    o_chunks = []
+    checkpoint_fn = get_checkpoint_fn()
+    count = query.shape[chunk_dim]
+    for start in range(0, count, chunk_size):
+        end = start + chunk_size
+        idx = [slice(None)] * len(query.shape)
+        idx[chunk_dim] = slice(start, end)
+        idx_tup = tuple(idx)
+        q_chunk = query[idx_tup]
+        k_chunk = key[idx_tup]
+        v_chunk = value[idx_tup]
 
-    # Reshape tensors to match expected input shape [B, N, Q/K, H, C_hidden]
-    # for DS4Sci_EvoformerAttention() by adding or flattening batch dims as needed.
-    orig_shape = q.shape
-    if len(orig_shape[:-3]) != 2:
-        q = reshape_dims(q)
-        k = reshape_dims(k)
-        v = reshape_dims(v)
-        biases = [reshape_dims(b) for b in biases]
+        def _slice_bias(b):
+            idx[chunk_dim] = (
+                slice(start, end) if b.shape[chunk_dim] != 1 else slice(None)
+            )
+            return b[tuple(idx)]
 
-    # DeepSpeed attn. kernel requires inputs to be type bf16 or fp16
-    # Cast to bf16 so kernel can be used during inference
-    orig_dtype = q.dtype
-    if orig_dtype not in [torch.bfloat16, torch.float16]:
-        o = DS4Sci_EvoformerAttention(q.to(dtype=torch.bfloat16),
-                                      k.to(dtype=torch.bfloat16),
-                                      v.to(dtype=torch.bfloat16),
-                                      [b.to(dtype=torch.bfloat16) for b in biases])
-
-        o = o.to(dtype=orig_dtype)
-    else:
-        o = DS4Sci_EvoformerAttention(q, k, v, biases)
-
-    o = o.reshape(orig_shape)
-    return o
-
-
-def _lma(
-    q: torch.Tensor, 
-    k: torch.Tensor, 
-    v: torch.Tensor, 
-    biases: List[torch.Tensor], 
-    q_chunk_size: int, 
-    kv_chunk_size: int,
-):
-    no_q, no_kv = q.shape[-2], k.shape[-2]
-
-    # [*, H, Q, C_hidden]
-    o = q.new_zeros(q.shape)
-    for q_s in range(0, no_q, q_chunk_size):
-        q_chunk = q[..., q_s: q_s + q_chunk_size, :]
-        large_bias_chunks = [
-            b[..., q_s: q_s + q_chunk_size, :] for b in biases
-        ]
-
-        maxes = []
-        weights = []
-        values = []
-        for kv_s in range(0, no_kv, kv_chunk_size):
-            k_chunk = k[..., kv_s: kv_s + kv_chunk_size, :]
-            v_chunk = v[..., kv_s: kv_s + kv_chunk_size, :]
-            small_bias_chunks = [
-                b[..., kv_s: kv_s + kv_chunk_size] for b in large_bias_chunks
+        if checkpoint:
+            bias_1_chunk, bias_2_chunk = [
+                _slice_bias(b) if b is not None else None
+                for b in (biases + [None, None])[:2]
             ]
 
-            a = torch.einsum(
-                "...hqd,...hkd->...hqk", q_chunk, k_chunk,
+            o_chunk = checkpoint_fn(_checkpointable_attention,
+                q_chunk, k_chunk, v_chunk, bias_1_chunk, bias_2_chunk
             )
-       
-            for b in small_bias_chunks:
-                a += b
-        
-            max_a = torch.max(a, dim=-1, keepdim=True)[0]
-            exp_a = torch.exp(a - max_a)
-            exp_v = torch.einsum("...hvf,...hqv->...hqf", v_chunk, exp_a)
- 
-            maxes.append(max_a.detach().squeeze(-1))
-            weights.append(torch.sum(exp_a, dim=-1))
-            values.append(exp_v)
+        else:
+            bias_chunks = [
+                _slice_bias(b) for b in biases
+            ]
 
-        chunk_max = torch.stack(maxes, dim=-3)
-        chunk_weights = torch.stack(weights, dim=-3)
-        chunk_values = torch.stack(values, dim=-4)
+            o_chunk = _attention(q_chunk, k_chunk, v_chunk, bias_chunks)
+            
+        o_chunk = o_chunk.transpose(-2, -3)
+        o_chunks.append(o_chunk)
 
-        global_max = torch.max(chunk_max, dim=-3, keepdim=True)[0]
-        max_diffs = torch.exp(chunk_max - global_max)
-        chunk_values = chunk_values * max_diffs.unsqueeze(-1)
-        chunk_weights = chunk_weights * max_diffs
-
-        all_values = torch.sum(chunk_values, dim=-4)
-        all_weights = torch.sum(chunk_weights.unsqueeze(-1), dim=-4)
-
-        q_chunk_out = all_values / all_weights
-
-        o[..., q_s: q_s + q_chunk_size, :] = q_chunk_out
-
+    o = torch.cat(o_chunks, dim=chunk_dim)
     return o
-
-
-def _flash_attn(
-    q: torch.Tensor, 
-    k: torch.Tensor, 
-    v: torch.Tensor, 
-    kv_mask: torch.Tensor
-):
-    if not fa_is_installed:
-        raise ValueError(
-            "_flash_attn requires that FlashAttention be installed"
-        )
-   
-    batch_dims = q.shape[:-3]
-    no_heads, n, c = q.shape[-3:]
-    dtype = q.dtype
-
-    q = q.half()
-    k = k.half()
-    v = v.half()
-    kv_mask = kv_mask.half()
-
-    # [*, B, N, H, C]
-    q = q.transpose(-2, -3)
-    k = k.transpose(-2, -3)
-    v = v.transpose(-2, -3)
-
-    # [B_flat, N, H, C]
-    q = q.reshape(-1, *q.shape[-3:])
-    k = k.reshape(-1, *k.shape[-3:])
-    v = v.reshape(-1, *v.shape[-3:])
-
-    # Flattened batch size
-    batch_size = q.shape[0]
-    
-    # [B_flat * N, H, C]
-    q = q.reshape(-1, *q.shape[-2:])
-    
-    q_max_s = n
-    q_cu_seqlens = torch.arange(
-        0, (batch_size + 1) * n, step=n, dtype=torch.int32, device=q.device
-    )
-
-    # [B_flat, N, 2, H, C]
-    kv = torch.stack([k, v], dim=-3) 
-    kv_shape = kv.shape
-    
-    # [B_flat, N, 2 * H * C]
-    kv = kv.reshape(*kv.shape[:-3], -1) 
-    
-    kv_unpad, _, kv_cu_seqlens, kv_max_s = unpad_input(kv, kv_mask)
-    kv_unpad = kv_unpad.reshape(-1, *kv_shape[-3:])
-   
-    out = flash_attn_unpadded_kvpacked_func(
-        q,
-        kv_unpad,
-        q_cu_seqlens,
-        kv_cu_seqlens,
-        q_max_s,
-        kv_max_s,
-        dropout_p=0.,
-        softmax_scale=1.,  # q has been scaled already
-    )
-  
-    # [*, B, N, H, C]
-    out = out.reshape(*batch_dims, n, no_heads, c) 
-
-    out = out.to(dtype=dtype)
-
-    return out
 
 
 class Attention(nn.Module):
@@ -776,56 +633,199 @@ class GlobalAttention(nn.Module):
 
         return m
 
-        
-def _attention_chunked_trainable(
-    query, key, value, biases, chunk_size, chunk_dim, checkpoint, 
+
+def _deepspeed_evo_attn(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    biases: List[torch.Tensor],
 ):
-    if checkpoint and len(biases) > 2:
+    """""
+    Compute attention using the DeepSpeed DS4Sci_EvoformerAttention kernel.
+
+    Args:
+        q:
+            [*, H, Q, C_hidden] query data
+        k:
+            [*, H, K, C_hidden] key data
+        v:
+            [*, H, V, C_hidden] value data
+        biases:
+            List of biases that broadcast to [*, H, Q, K]
+    """
+
+    if not ds4s_is_installed:
         raise ValueError(
-            "Checkpointed version permits only permits two bias terms"
+            "_deepspeed_evo_attn requires that DeepSpeed be installed "
+            "and that the deepspeed.ops.deepspeed4science package exists"
         )
 
-    def _checkpointable_attention(q, k, v, b1, b2):
-        bs = [b for b in [b1, b2] if b is not None]
-        a = _attention(q, k, v, bs)
-        return a
+    def reshape_dims(x):
+        no_batch_dims = len(x.shape[:-3])
+        if no_batch_dims < 2:
+            return x.reshape(*((1,) * (2 - no_batch_dims) + x.shape))
+        if no_batch_dims > 2:
+            return x.reshape(*((x.shape[0], -1) + x.shape[-3:]))
+        return x
 
-    o_chunks = []
-    checkpoint_fn = get_checkpoint_fn()
-    count = query.shape[chunk_dim]
-    for start in range(0, count, chunk_size):
-        end = start + chunk_size
-        idx = [slice(None)] * len(query.shape)
-        idx[chunk_dim] = slice(start, end)
-        idx_tup = tuple(idx)
-        q_chunk = query[idx_tup]
-        k_chunk = key[idx_tup]
-        v_chunk = value[idx_tup]
+    # [*, Q/K, H, C_hidden]
+    q = q.transpose(-2, -3)
+    k = k.transpose(-2, -3)
+    v = v.transpose(-2, -3)
 
-        def _slice_bias(b):
-            idx[chunk_dim] = (
-                slice(start, end) if b.shape[chunk_dim] != 1 else slice(None)
-            )
-            return b[tuple(idx)]
+    # Reshape tensors to match expected input shape [B, N, Q/K, H, C_hidden]
+    # for DS4Sci_EvoformerAttention() by adding or flattening batch dims as needed.
+    orig_shape = q.shape
+    if len(orig_shape[:-3]) != 2:
+        q = reshape_dims(q)
+        k = reshape_dims(k)
+        v = reshape_dims(v)
+        biases = [reshape_dims(b) for b in biases]
 
-        if checkpoint:
-            bias_1_chunk, bias_2_chunk = [
-                _slice_bias(b) if b is not None else None
-                for b in (biases + [None, None])[:2]
-            ]
+    # DeepSpeed attn. kernel requires inputs to be type bf16 or fp16
+    # Cast to bf16 so kernel can be used during inference
+    orig_dtype = q.dtype
+    if orig_dtype not in [torch.bfloat16, torch.float16]:
+        o = DS4Sci_EvoformerAttention(q.to(dtype=torch.bfloat16),
+                                      k.to(dtype=torch.bfloat16),
+                                      v.to(dtype=torch.bfloat16),
+                                      [b.to(dtype=torch.bfloat16) for b in biases])
 
-            o_chunk = checkpoint_fn(_checkpointable_attention,
-                q_chunk, k_chunk, v_chunk, bias_1_chunk, bias_2_chunk
-            )
-        else:
-            bias_chunks = [
-                _slice_bias(b) for b in biases
-            ]
+        o = o.to(dtype=orig_dtype)
+    else:
+        o = DS4Sci_EvoformerAttention(q, k, v, biases)
 
-            o_chunk = _attention(q_chunk, k_chunk, v_chunk, bias_chunks)
-            
-        o_chunk = o_chunk.transpose(-2, -3)
-        o_chunks.append(o_chunk)
-
-    o = torch.cat(o_chunks, dim=chunk_dim)
+    o = o.reshape(orig_shape)
     return o
+
+
+def _lma(
+    q: torch.Tensor, 
+    k: torch.Tensor, 
+    v: torch.Tensor, 
+    biases: List[torch.Tensor], 
+    q_chunk_size: int, 
+    kv_chunk_size: int,
+):
+    no_q, no_kv = q.shape[-2], k.shape[-2]
+
+    # [*, H, Q, C_hidden]
+    o = q.new_zeros(q.shape)
+    for q_s in range(0, no_q, q_chunk_size):
+        q_chunk = q[..., q_s: q_s + q_chunk_size, :]
+        large_bias_chunks = [
+            b[..., q_s: q_s + q_chunk_size, :] for b in biases
+        ]
+
+        maxes = []
+        weights = []
+        values = []
+        for kv_s in range(0, no_kv, kv_chunk_size):
+            k_chunk = k[..., kv_s: kv_s + kv_chunk_size, :]
+            v_chunk = v[..., kv_s: kv_s + kv_chunk_size, :]
+            small_bias_chunks = [
+                b[..., kv_s: kv_s + kv_chunk_size] for b in large_bias_chunks
+            ]
+
+            a = torch.einsum(
+                "...hqd,...hkd->...hqk", q_chunk, k_chunk,
+            )
+       
+            for b in small_bias_chunks:
+                a += b
+        
+            max_a = torch.max(a, dim=-1, keepdim=True)[0]
+            exp_a = torch.exp(a - max_a)
+            exp_v = torch.einsum("...hvf,...hqv->...hqf", v_chunk, exp_a)
+ 
+            maxes.append(max_a.detach().squeeze(-1))
+            weights.append(torch.sum(exp_a, dim=-1))
+            values.append(exp_v)
+
+        chunk_max = torch.stack(maxes, dim=-3)
+        chunk_weights = torch.stack(weights, dim=-3)
+        chunk_values = torch.stack(values, dim=-4)
+
+        global_max = torch.max(chunk_max, dim=-3, keepdim=True)[0]
+        max_diffs = torch.exp(chunk_max - global_max)
+        chunk_values = chunk_values * max_diffs.unsqueeze(-1)
+        chunk_weights = chunk_weights * max_diffs
+
+        all_values = torch.sum(chunk_values, dim=-4)
+        all_weights = torch.sum(chunk_weights.unsqueeze(-1), dim=-4)
+
+        q_chunk_out = all_values / all_weights
+
+        o[..., q_s: q_s + q_chunk_size, :] = q_chunk_out
+
+    return o
+
+
+def _flash_attn(
+    q: torch.Tensor, 
+    k: torch.Tensor, 
+    v: torch.Tensor, 
+    kv_mask: torch.Tensor
+):
+    if not fa_is_installed:
+        raise ValueError(
+            "_flash_attn requires that FlashAttention be installed"
+        )
+   
+    batch_dims = q.shape[:-3]
+    no_heads, n, c = q.shape[-3:]
+    dtype = q.dtype
+
+    q = q.half()
+    k = k.half()
+    v = v.half()
+    kv_mask = kv_mask.half()
+
+    # [*, B, N, H, C]
+    q = q.transpose(-2, -3)
+    k = k.transpose(-2, -3)
+    v = v.transpose(-2, -3)
+
+    # [B_flat, N, H, C]
+    q = q.reshape(-1, *q.shape[-3:])
+    k = k.reshape(-1, *k.shape[-3:])
+    v = v.reshape(-1, *v.shape[-3:])
+
+    # Flattened batch size
+    batch_size = q.shape[0]
+    
+    # [B_flat * N, H, C]
+    q = q.reshape(-1, *q.shape[-2:])
+    
+    q_max_s = n
+    q_cu_seqlens = torch.arange(
+        0, (batch_size + 1) * n, step=n, dtype=torch.int32, device=q.device
+    )
+
+    # [B_flat, N, 2, H, C]
+    kv = torch.stack([k, v], dim=-3) 
+    kv_shape = kv.shape
+    
+    # [B_flat, N, 2 * H * C]
+    kv = kv.reshape(*kv.shape[:-3], -1) 
+    
+    kv_unpad, _, kv_cu_seqlens, kv_max_s = unpad_input(kv, kv_mask)
+    kv_unpad = kv_unpad.reshape(-1, *kv_shape[-3:])
+   
+    out = flash_attn_unpadded_kvpacked_func(
+        q,
+        kv_unpad,
+        q_cu_seqlens,
+        kv_cu_seqlens,
+        q_max_s,
+        kv_max_s,
+        dropout_p=0.,
+        softmax_scale=1.,  # q has been scaled already
+    )
+  
+    # [*, B, N, H, C]
+    out = out.reshape(*batch_dims, n, no_heads, c) 
+
+    out = out.to(dtype=dtype)
+
+    return out

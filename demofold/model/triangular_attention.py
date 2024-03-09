@@ -58,7 +58,8 @@ class TriangleAttention(nn.Module):
             self.c_in, self.c_in, self.c_in, self.c_hidden, self.no_heads
         )
 
-    def _chunk(self,
+    def _chunk(
+        self,
         x: torch.Tensor,
         biases: List[torch.Tensor],
         chunk_size: int,
