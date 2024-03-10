@@ -118,7 +118,7 @@ class StructureModule(nn.Module):
         dropout_rate: float,
         no_blocks: int,
         no_transition_layers: int,
-        trans_scale_factor: int,
+        trans_scale_factor: float,
         epsilon: float,
         inf: float,
     ):

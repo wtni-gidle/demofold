@@ -81,7 +81,7 @@ def batched_gather(data, inds, dim=0, no_batch_dims=0):
 
 
 # With tree_map, a poor man's JAX tree_map
-def dict_map(fn, dic, leaf_type):
+def dict_map(fn, dic: Dict, leaf_type):
     new_dict = {}
     for k, v in dic.items():
         if type(v) is dict:
@@ -91,7 +91,7 @@ def dict_map(fn, dic, leaf_type):
 
     return new_dict
 
-
+# 有趣
 def tree_map(fn, tree, leaf_type):
     if isinstance(tree, dict):
         return dict_map(fn, tree, leaf_type)
