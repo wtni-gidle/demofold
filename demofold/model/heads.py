@@ -7,7 +7,7 @@ from .primitives import Linear, LayerNorm
 from ..utils.precision_utils import is_fp16_enabled
 
 
-
+# auxiliary heads
 class DistogramHead(nn.Module):
     """
     Computes a distogram probability distribution.
@@ -18,7 +18,8 @@ class DistogramHead(nn.Module):
     def __init__(
         self, 
         c_z: int, 
-        no_bins: int
+        no_bins: int,
+        **kwargs
     ):
         """
         Args:
@@ -34,25 +35,25 @@ class DistogramHead(nn.Module):
 
         self.linear = Linear(self.c_z, self.no_bins, init="final")
 
-    def _forward(self, pair: torch.Tensor) -> torch.Tensor:
+    def _forward(self, z: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            pair:
+            z:
                 [*, N_res, N_res, C_z] pair embedding
         Returns:
             [*, N_res, N_res, no_bins] distogram probability distribution
         """
         # [*, N_res, N_res, no_bins]
-        logits = self.linear(pair)
+        logits = self.linear(z)
         logits = logits + logits.transpose(-2, -3)
         return logits
     
-    def forward(self, pair: torch.Tensor) -> torch.Tensor: 
+    def forward(self, z: torch.Tensor) -> torch.Tensor: 
         if is_fp16_enabled():
             with torch.cuda.amp.autocast(enabled=False):
-                return self._forward(pair.float())
+                return self._forward(z.float())
         else:
-            return self._forward(pair)
+            return self._forward(z)
 
 
 class MaskedMSAHead(nn.Module):
@@ -80,7 +81,7 @@ class MaskedMSAHead(nn.Module):
 
         self.linear = Linear(self.c_m, self.c_out, init="final")
 
-    def forward(self, msa: torch.Tensor) -> torch.Tensor:
+    def forward(self, m: torch.Tensor) -> torch.Tensor:
         """
         Args:
             m:
@@ -89,7 +90,7 @@ class MaskedMSAHead(nn.Module):
             [*, N_seq, N_res, C_out] reconstruction
         """
         # [*, N_seq, N_res, C_out]
-        logits = self.linear(msa)
+        logits = self.linear(m)
         return logits
 
 
@@ -154,14 +155,14 @@ class ResnetBlock(nn.Module):
 class Geometry1DHead(nn.Module):
     def __init__(
         self, 
-        c_in: int, 
+        c_s: int, 
         c_hidden: int, 
         no_blocks: int,
         no_bins: int
     ):
         """
         Args:
-            c_in:
+            c_s:
                 Input channel dimension
             c_hidden:
                 Hidden channel dimension
@@ -172,12 +173,12 @@ class Geometry1DHead(nn.Module):
         """
         super().__init__()
 
-        self.c_in = c_in
+        self.c_s = c_s
         self.c_hidden = c_hidden
         self.no_blocks = no_blocks
         self.no_bins = no_bins
 
-        self.linear_in = Linear(self.c_in, self.c_hidden)
+        self.linear_in = Linear(self.c_s, self.c_hidden)
 
         self.layers = nn.ModuleList()
         for _ in range(self.no_blocks):
@@ -188,11 +189,11 @@ class Geometry1DHead(nn.Module):
 
         self.relu = nn.ReLU()
 
-    def _forward(self, seq: torch.Tensor) -> torch.Tensor:
+    def _forward(self, s: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            pair:
-                [*, N_res, C_in] single embedding
+            s:
+                [*, N_res, C_s] single embedding
         Returns:
             [*, N_res, no_bins] predicted angles
         """
@@ -201,31 +202,31 @@ class Geometry1DHead(nn.Module):
         # the pretrained weights, I'm going with the source.
 
         # [*, N_res, C_hidden]
-        seq = self.relu(seq)
-        seq = self.linear_in(seq)
+        s = self.relu(s)
+        s = self.linear_in(s)
 
         for l in self.layers:
-            seq = l(seq)
+            s = l(s)
 
-        seq = self.relu(seq)
+        s = self.relu(s)
 
         # [*, N_res, no_bins]
-        logits = self.linear_out(seq)
+        logits = self.linear_out(s)
 
         return logits
     
-    def forward(self, seq: torch.Tensor) -> torch.Tensor: 
+    def forward(self, s: torch.Tensor) -> torch.Tensor: 
         if is_fp16_enabled():
             with torch.cuda.amp.autocast(enabled=False):
-                return self._forward(seq.float())
+                return self._forward(s.float())
         else:
-            return self._forward(seq)
+            return self._forward(s)
 
 
 class Geometry2DHead(nn.Module):
     def __init__(
         self, 
-        c_in: int, 
+        c_z: int, 
         c_hidden: int, 
         no_blocks: int,
         no_bins: int,
@@ -233,7 +234,7 @@ class Geometry2DHead(nn.Module):
     ):
         """
         Args:
-            c_in:
+            c_z:
                 Input channel dimension
             c_hidden:
                 Hidden channel dimension
@@ -244,13 +245,13 @@ class Geometry2DHead(nn.Module):
         """
         super().__init__()
 
-        self.c_in = c_in
+        self.c_z = c_z
         self.c_hidden = c_hidden
         self.no_blocks = no_blocks
         self.no_bins = no_bins
         self.symmetrize = symmetrize
 
-        self.linear_in = Linear(self.c_in, self.c_hidden)
+        self.linear_in = Linear(self.c_z, self.c_hidden)
 
         self.layers = nn.ModuleList()
         for _ in range(self.no_blocks):
@@ -261,11 +262,11 @@ class Geometry2DHead(nn.Module):
 
         self.relu = nn.ReLU()
 
-    def _forward(self, pair: torch.Tensor) -> torch.Tensor:
+    def _forward(self, z: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            pair:
-                [*, N_res, N_res, C_in] single embedding
+            z:
+                [*, N_res, N_res, C_z] pair embedding
         Returns:
             [*, N_res, N_res, no_bins] predicted angles
         """
@@ -274,27 +275,27 @@ class Geometry2DHead(nn.Module):
         # the pretrained weights, I'm going with the source.
 
         # [*, N_res, N_res, C_hidden]
-        pair = self.relu(pair)
-        pair = self.linear_in(pair)
+        z = self.relu(z)
+        z = self.linear_in(z)
 
         for l in self.layers:
-            pair = l(pair)
+            z = l(z)
 
-        pair = self.relu(pair)
+        z = self.relu(z)
 
         # [*, N_res, N_res, no_bins]
-        logits = self.linear_out(pair)
+        logits = self.linear_out(z)
         if self.symmetrize:
             logits = logits + logits.transpose(-2, -3)
 
         return logits
     
-    def forward(self, pair: torch.Tensor) -> torch.Tensor: 
+    def forward(self, z: torch.Tensor) -> torch.Tensor: 
         if is_fp16_enabled():
             with torch.cuda.amp.autocast(enabled=False):
-                return self._forward(pair.float())
+                return self._forward(z.float())
         else:
-            return self._forward(pair)
+            return self._forward(z)
 
 
 class GeometryHeads(nn.Module):
@@ -312,11 +313,11 @@ class GeometryHeads(nn.Module):
         self.pccp_head = Geometry2DHead(
             **config["PCCP"]
         )
-        self.pnnp_head = Geometry2DHead(
-            **config["PNNP"]
-        )
         self.cnnc_head = Geometry2DHead(
             **config["CNNC"]
+        )
+        self.pnnp_head = Geometry2DHead(
+            **config["PNNP"]
         )
         
         self.config = config

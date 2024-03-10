@@ -357,7 +357,7 @@ class StructureLoss(nn.Module):
         loss_fns = {
             "distogram": lambda: distogram_loss(
                 logits=out["distogram_logits"],
-                atom_position=batch["atom_N"]
+                atom_position=batch["atom_N"],
                 **{**batch, **self.config.distogram},
             ),
             "fape": lambda: fape_loss(
@@ -705,36 +705,36 @@ class GeometryLoss(nn.Module):
             "PP": lambda: distogram_loss(
                 logits=out["PP_logits"],
                 atom_position=batch["atom_P"],
-                **{**batch, **self.config.geometry.PP},
+                **{**batch, **self.config.PP},
             ),
             "CC": lambda: distogram_loss(
                 logits=out["CC_logits"],
                 atom_position=batch["atom_C"],
-                **{**batch, **self.config.geometry.CC},
+                **{**batch, **self.config.CC},
             ),
             "NN": lambda: distogram_loss(
                 logits=out["NN_logits"],
                 atom_position=batch["atom_N"],
-                **{**batch, **self.config.geometry.NN},
+                **{**batch, **self.config.NN},
             ),
             "PCCP": lambda: PCCP_dihedral_loss(
                 logits=out["PCCP_logits"],
-                **{**batch, **self.config.geometry.PCCP},
+                **{**batch, **self.config.PCCP},
             ),
             "PNNP": lambda: PNNP_dihedral_loss(
                 logits=out["PNNP_logits"],
-                **{**batch, **self.config.geometry.PNNP},
+                **{**batch, **self.config.PNNP},
             ),
             "CNNC": lambda: CNNC_dihedral_loss(
                 logits=out["CNNC_logits"],
-                **{**batch, **self.config.geometry.CNNC},
+                **{**batch, **self.config.CNNC},
             ),
         }
 
         cum_loss = 0.
         losses = {}
         for loss_name, loss_fn in loss_fns.items():
-            weight = self.config.geometry[loss_name].weight
+            weight = self.config[loss_name].weight
             loss = loss_fn()
             if torch.isnan(loss) or torch.isinf(loss):
                 # for k,v in batch.items():
