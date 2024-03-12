@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from typing import Tuple, Optional
+from typing import Tuple
 
 from ..utils.tensor_utils import expand_first_dims, add
 from .primitives import Linear, LayerNorm

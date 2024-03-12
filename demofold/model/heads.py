@@ -297,7 +297,7 @@ class Geometry2DHead(nn.Module):
         else:
             return self._forward(z)
 
-
+# todo 看起来还是有masked_msa
 class GeometryHeads(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -319,10 +319,13 @@ class GeometryHeads(nn.Module):
         self.pnnp_head = Geometry2DHead(
             **config["PNNP"]
         )
+        self.masked_msa = MaskedMSAHead(
+            **config["masked_msa"],
+        )
         
         self.config = config
     
-    def forward(self, outputs: Dict[torch.Tensor]) -> Dict[torch.Tensor]:
+    def forward(self, outputs: Dict[torch.Tensor]) -> Dict[str, torch.Tensor]:
         geom_outputs = {}
         geom_outputs["PP_logits"] = self.pp_head(outputs["pair"])
         geom_outputs["CC_logits"] = self.cc_head(outputs["pair"])
@@ -330,6 +333,7 @@ class GeometryHeads(nn.Module):
         geom_outputs["PCCP_logits"] = self.pccp_head(outputs["pair"])
         geom_outputs["PNNP_logits"] = self.pnnp_head(outputs["pair"])
         geom_outputs["CNNC_logits"] = self.cnnc_head(outputs["pair"])
+        geom_outputs["masked_msa_logits"] = self.masked_msa(outputs["msa"])
 
         return geom_outputs
     

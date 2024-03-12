@@ -3,6 +3,29 @@ import torch.nn as nn
 
 from .rigid_utils import Rigid
 
+from ..np import residue_constants as rc
+
+
+
+def atom_position_fn(
+    atom: str, 
+    all_atom_positions: torch.Tensor, 
+    all_atom_masks: torch.Tensor
+):
+    """
+    目前只需要用到C4', P, N1/N9三个原子的坐标, 因此先只用三个原子代替全原子
+    all_atom_positions [..., N_res, 3, 3] 只含三个原子, 顺序为C4', P, N1/N9
+    atom: "N" or "C" or "P"
+    """
+    atom_mapping = {atom: idx for idx, atom in enumerate(["C", "P", "N"])}
+    atom_idx = atom_mapping[atom]
+    atom_position = all_atom_positions[..., atom_idx, :]
+
+    if all_atom_masks is not None:
+        return atom_position, all_atom_masks[..., atom_idx]
+    else:
+        return atom_position
+
 
 # 先写一个frame即bockbone的函数
 def frame_and_literature_positions_to_atom3_pos(

@@ -729,6 +729,10 @@ class GeometryLoss(nn.Module):
                 logits=out["CNNC_logits"],
                 **{**batch, **self.config.CNNC},
             ),
+            "masked_msa": lambda: masked_msa_loss(
+                logits=out["masked_msa_logits"],
+                **{**batch, **self.config.masked_msa},
+            ),
         }
 
         cum_loss = 0.

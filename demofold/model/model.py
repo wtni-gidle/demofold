@@ -1,32 +1,23 @@
-from functools import partial
+from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
 
-from ..data import data_transforms_multimer
-from ..utils.feats import (
-    pseudo_beta_fn,
-    build_extra_msa_feat,
-    atom14_to_atom37,
-)
-from ..utils.tensor_utils import masked_mean
-from .embedders import (
-    InputEmbedder,
-    RecyclingEmbedder,
-)
-from .evoformer import EvoformerStack, ExtraMSAStack
-from .heads import AuxiliaryHeads
-from .structure_module import StructureModule
-# import ..np.residue_constants as residue_constants
-from ..utils.loss import (
-    compute_plddt,
-)
+from ..utils.feats import atom_position_fn
 from ..utils.tensor_utils import (
     add,
-    dict_multimap,
     tensor_tree_map,
 )
-from ml_collections import ConfigDict
+from .embedders import (
+    InputEmbedder,
+    SSEmbedder,
+    RecyclingEmbedder,
+)
+from .evoformer import EvoformerStack
+from .heads import AuxiliaryHeads, GeometryHeads
+from .structure_module import StructureModule
+from ..np import residue_constants as rc
+
 
 class DemoFold(nn.Module):
     def __init__(self, config):
@@ -36,24 +27,46 @@ class DemoFold(nn.Module):
                 A dict-like config object (like the one in config.py)
         """
         super().__init__()
+
+        self.globals = config.globals
         self.config = config.model
+
+        # Main trunk + structure module
         self.input_embedder = InputEmbedder(
             **self.config["input_embedder"]
+        )
+        self.ss_embedder = SSEmbedder(
+            **self.config["ss_embedder"],
         )
         self.recycling_embedder = RecyclingEmbedder(
             **self.config["recycling_embedder"],
         )
+
         self.evoformer = EvoformerStack(
             **self.config["evoformer_stack"],
         )
-        self.structure_module = StructureModule(
-            **self.config["structure_module"],
-        )
-        self.aux_heads = AuxiliaryHeads(
-            self.config["heads"],
-        )
+        if self.globals.is_e2e:
+            self.structure_module = StructureModule(
+                **self.config["structure_module"],
+            )
+        
+        if self.globals.is_e2e:
+            self.heads = AuxiliaryHeads(
+                self.config["aux_heads"],
+            )
+        else:
+            self.heads = GeometryHeads(
+                self.config["geom_heads"]
+            )
     
-    def iteration(self, feats, prevs, _recycle=True):
+    def iteration(
+        self, 
+        feats: Dict[str, torch.Tensor], 
+        prevs: List[torch.Tensor]
+    ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        prevs: [m_1_prev, z_prev, x_prev]
+        """
         # Primary output dictionary
         outputs = {}
 
@@ -65,14 +78,184 @@ class DemoFold(nn.Module):
         
         # Grab some data about the input
         batch_dims = feats["target_feat"].shape[:-2]
-        no_batch_dims = len(batch_dims)
-        n = feats["target_feat"].shape[-2]
+        n_res = feats["target_feat"].shape[-2]
         n_seq = feats["msa_feat"].shape[-3]
         device = feats["target_feat"].device
 
+        # Controls whether the model uses in-place operations throughout
+        # The dual condition accounts for activation checkpoints
+        inplace_safe = not (self.training or torch.is_grad_enabled())
+
+        # Prep some features
+        seq_mask = feats["seq_mask"]
+        msa_mask = feats["msa_mask"]
+        # 这里可以看出来和drfold不同，drfold是1代表gap，这里是0代表gap
+        pair_mask = seq_mask[..., None] * seq_mask[..., None, :]
+
+        # Initialize the MSA and pair representations
+        # m: [*, N_seq, N_res, C_m]
+        # z: [*, N_res, N_res, C_z]
+        m, z = self.input_embedder(
+            feats["target_feat"],
+            feats["msa_feat"],
+            inplace_safe=inplace_safe,
+        )
+
+        ss_emb = self.ss_embedder(
+            feats["ss_feat"],
+        )
+        # [*, N_res, N_res, C_z]
+        z = add(z, ss_emb, inplace=inplace_safe)
+
+        del ss_emb
+
+        # Unpack the recycling embeddings. Removing them from the list allows 
+        # them to be freed further down in this function, saving memory
+        m_1_prev, z_prev, x_prev = reversed([prevs.pop() for _ in range(3)])
+
+        # Initialize the recycling embeddings, if needs be 
+        if None in [m_1_prev, z_prev, x_prev]:
+            # [*, N_res, C_m]
+            m_1_prev = m.new_zeros(
+                (*batch_dims, n_res, self.config.input_embedder.c_m),
+                requires_grad=False,
+            )
+
+            # [*, N_res, N_res, C_z]
+            z_prev = z.new_zeros(
+                (*batch_dims, n_res, n_res, self.config.input_embedder.c_z),
+                requires_grad=False,
+            )
+
+            # [*, N_res, atom_type_num, 3]
+            # 这里不同于openfold的全原子, 只使用三个原子
+            x_prev = z.new_zeros(
+                (*batch_dims, n_res, 3, 3),
+                requires_grad=False,
+            )
+        
+        # DRfold geometry
+        if not self.globals.is_e2e:
+            lit_positions = torch.tensor(
+                rc.restype_atom3_bb_positions, 
+                dtype=z.dtype,
+                device=z.device,
+                requires_grad=False,
+            )
+            x_prev = lit_positions[feats["restype"], ...]
+
+        # [*, N_res, 3] predicted N coordinates
+        glycos_N_x_prev = atom_position_fn(
+            "N", x_prev, None
+        ).to(dtype=z.dtype)
+
+        del x_prev
+
+        # The recycling embedder is memory-intensive, so we offload first
+        # 其实很简单，就是暂时把在内存密集型计算任务用不到的参数先移到cpu上，
+        # 计算完之后再将参数移回gpu上
+        if self.globals.offload_inference and inplace_safe:
+            m = m.cpu()
+            z = z.cpu()
+        
+        # m_1_prev_emb: [*, N_res, C_m]
+        # z_prev_emb: [*, N_res, N_res, C_z]
+        m_1_prev_emb, z_prev_emb = self.recycling_embedder(
+            m_1_prev,
+            z_prev,
+            glycos_N_x_prev,
+            inplace_safe=inplace_safe,
+        )
+
+        del glycos_N_x_prev
+
+        if self.globals.offload_inference and inplace_safe:
+            m = m.to(m_1_prev_emb.device)
+            z = z.to(z_prev.device)
+
+        # [*, N_seq, N_res, C_m]
+        m[..., 0, :, :] += m_1_prev_emb
+
+        # [*, N_res, N_res, C_z]
+        z = add(z, z_prev_emb, inplace=inplace_safe)
+
+        # Deletions like these become significant for inference with large N,
+        # where they free unused tensors and remove references to others such
+        # that they can be offloaded later
+        del m_1_prev, z_prev, m_1_prev_emb, z_prev_emb
+
+        # Run MSA + pair embeddings through the trunk of the network
+        # m: [*, N_seq, N_res, C_m]
+        # z: [*, N_res, N_res, C_z]
+        # s: [*, N_res, C_s]
+        if self.globals.offload_inference:
+            input_tensors = [m, z]
+            del m, z
+            m, z, s = self.evoformer._forward_offload(
+                input_tensors,
+                msa_mask=msa_mask.to(dtype=input_tensors[0].dtype),
+                pair_mask=pair_mask.to(dtype=input_tensors[1].dtype),
+                chunk_size=self.globals.chunk_size,
+                use_deepspeed_evo_attention=self.globals.use_deepspeed_evo_attention,
+                use_lma=self.globals.use_lma,
+                _mask_trans=self.config._mask_trans,
+            )
+
+            del input_tensors
+        else:
+            m, z, s = self.evoformer(
+                m,
+                z,
+                msa_mask=msa_mask.to(dtype=m.dtype),
+                pair_mask=pair_mask.to(dtype=z.dtype),
+                chunk_size=self.globals.chunk_size,
+                use_deepspeed_evo_attention=self.globals.use_deepspeed_evo_attention,
+                use_lma=self.globals.use_lma,
+                use_flash=self.globals.use_flash,
+                inplace_safe=inplace_safe,
+                _mask_trans=self.config._mask_trans,
+            )
+
+        # openfold这里选择前n_seq个，是因为之前有个template模块，m在序列个数维度上有所增加
+        # outputs["msa"] = m[..., :n_seq, :, :]
+        outputs["msa"] = m
+        outputs["pair"] = z
+        outputs["single"] = s
+
+        del z
+
+        # e2e or geometry
+        # Predict 3D structure
+        if self.globals.is_e2e:
+            outputs["sm"] = self.structure_module(
+                outputs,
+                feats["restype"],
+                mask=feats["seq_mask"].to(dtype=s.dtype),
+                inplace_safe=inplace_safe,
+                _offload_inference=self.globals.offload_inference,
+            )
+            # [*, N_res, 3, 3]
+            outputs["final_atom_positions"] = outputs["sm"]["positions"][-1]
+            outputs["final_affine_tensor"] = outputs["sm"]["frames"][-1]
+
+        # Save embeddings for use during the next recycling iteration
+
+        # [*, N_res, C_m]
+        m_1_prev = m[..., 0, :, :]
+
+        # [*, N_res, N_res, C_z]
+        z_prev = outputs["pair"]
+
+        # [*, N_res, 3, 3]
+        x_prev = None
+        if self.globals.is_e2e:
+            x_prev = outputs["final_atom_positions"]
+
+        return outputs, m_1_prev, z_prev, x_prev
 
 
-    def forward(self, batch):
+
+    def forward(self, batch: Dict[str, torch.Tensor]):
         """
         Args:
             batch:
@@ -100,25 +283,54 @@ class DemoFold(nn.Module):
                         MSA mask
                     "pair_mask" ([*, N_res, N_res])
                         2-D pair mask
-                    "extra_msa_mask" ([*, N_extra, N_res])
-                        Extra MSA mask
-                    "template_mask" ([*, N_templ])
-                        Template mask (on the level of templates, not
-                        residues)
-                    "template_aatype" ([*, N_templ, N_res])
-                        Tensor of template residue indices (indices greater
-                        than 19 are clamped to 20 (Unknown))
-                    "template_all_atom_positions"
-                        ([*, N_templ, N_res, 37, 3])
-                        Template atom coordinates in atom37 format
-                    "template_all_atom_mask" ([*, N_templ, N_res, 37])
-                        Template atom coordinate mask
-                    "template_pseudo_beta" ([*, N_templ, N_res, 3])
-                        Positions of template carbon "pseudo-beta" atoms
-                        (i.e. C_beta for all residues but glycine, for
-                        for which C_alpha is used instead)
-                    "template_pseudo_beta_mask" ([*, N_templ, N_res])
-                        Pseudo-beta mask
         """
+        # Initialize recycling embeddings
+        m_1_prev, z_prev, x_prev = None, None, None
+        prevs = [m_1_prev, z_prev, x_prev]
 
+        is_grad_enabled = torch.is_grad_enabled()
+
+        # Main recycling loop
+        num_iters = batch["restype"].shape[-1]
+        # openfold有early stop机制，但貌似只用在multimer模式
+        # early_stop = False
+        num_recycles = 0
+        for cycle_no in range(num_iters):
+            # Select the features for the current recycling cycle
+            fetch_cur_batch = lambda t: t[..., cycle_no]
+            feats = tensor_tree_map(fetch_cur_batch, batch)
+
+            # Enable grad iff we're training and it's the final recycling layer
+            is_final_iter = cycle_no == (num_iters - 1)
+            with torch.set_grad_enabled(is_grad_enabled and is_final_iter):
+                if is_final_iter:
+                    # Sidestep AMP bug (PyTorch issue #65766)
+                    if torch.is_autocast_enabled():
+                        torch.clear_autocast_cache()
+
+                # Run the next iteration of the model
+                outputs, m_1_prev, z_prev, x_prev = self.iteration(
+                    feats,
+                    prevs
+                )
+
+                num_recycles += 1
+
+                if not is_final_iter:
+                    del outputs
+                    prevs = [m_1_prev, z_prev, x_prev]
+                    del m_1_prev, z_prev, x_prev
+                else:
+                    break
+
+        outputs["num_recycles"] = torch.tensor(num_recycles, device=feats["restype"].device)
+
+        # Run auxiliary heads
+        # todo
+        outputs.update(self.heads(outputs))
+
+        return outputs
+
+
+# todo 最后检查一下outputs是否都用到了，可以del不必要的变量。再次检查两种模式
 

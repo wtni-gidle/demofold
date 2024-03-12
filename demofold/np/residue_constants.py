@@ -5,9 +5,9 @@ import numpy as np
 # residue
 restypes = [
     "A",
-    "U",
     "C",
     "G",
+    "U",
 ]
 restype_order = {restype: i for i, restype in enumerate(restypes)}
 restype_num = len(restypes)  # := 4.
@@ -66,47 +66,93 @@ def sequence_to_onehot(
     return one_hot_arr
 
 # atom
-atom_types = [
-    "C4'",
-    "P",
-    "N",
-]
+
+# This mapping is used when we need to store atom data in a format that requires
+# fixed atom data size for every residue (e.g. a numpy array).
+atom_types = ["OP3", "P", "OP1", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", 
+              "C2'", "O2'", "C1'", "N9", "C8", "N7", "C5", "C6", "N6", "N1", "C2", 
+              "N3", "C4", "O2", "N4", "O6", "N2", "O4"]
 atom_order = {atom_type: i for i, atom_type in enumerate(atom_types)}
-atom_type_num = len(atom_types)  # := 3.
+atom_type_num = len(atom_types)  # := 28.
+
+
+
+# residue and atom
+# A list of atoms (excluding hydrogen) for each nucleotide type. PDB naming convention.
+residue_atoms = {
+    "A": ["OP3", "P", "OP1", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", 
+          "C2'", "O2'", "C1'", "N9", "C8", "N7", "C5", "C6", "N6", "N1", "C2", 
+          "N3", "C4"],
+    "C": ["OP3", "P", "OP1", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", 
+          "C2'", "O2'", "C1'", "N1", "C2", "O2", "N3", "C4", "N4", "C5", "C6"],
+    "G": ["OP3", "P", "OP1", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", 
+          "C2'", "O2'", "C1'", "N9", "C8", "N7", "C5", "C6", "O6", "N1", "C2", 
+          "N2", "N3", "C4"],
+    "U": ["OP3", "P", "OP1", "OP2", "O5'", "C5'", "C4'", "O4'", "C3'", "O3'", 
+          "C2'", "O2'", "C1'", "N1", "C2", "O2", "N3", "C4", "O4", "C5", "C6"],
+}
+
+
 
 # todo 需要查阅资料
+# backbone上的三个原子的坐标
 bb_atom3_positions = {
     "A": [
-        ["C4'", (0.000, 0.000, 0.000)],
-        ["P", (0.000, 0.000, 0.000)],
-        ["N", (0.000, 0.000, 0.000)],
-    ],
-    "U": [
-        ["C4'", (0.000, 0.000, 0.000)],
-        ["P", (0.000, 0.000, 0.000)],
-        ["N", (0.000, 0.000, 0.000)],
+        ["C4'", (1.000, 1.000, 1.000)],
+        ["P", (1.000, 1.000, 1.000)],
+        ["N9", (1.000, 1.000, 1.000)],
     ],
     "C": [
-        ["C4'", (0.000, 0.000, 0.000)],
-        ["P", (0.000, 0.000, 0.000)],
-        ["N", (0.000, 0.000, 0.000)],
+        ["C4'", (1.000, 1.000, 1.000)],
+        ["P", (1.000, 1.000, 1.000)],
+        ["N1", (1.000, 1.000, 1.000)],
     ],
     "G": [
-        ["C4'", (0.000, 0.000, 0.000)],
-        ["P", (0.000, 0.000, 0.000)],
-        ["N", (0.000, 0.000, 0.000)],
+        ["C4'", (1.000, 1.000, 1.000)],
+        ["P", (1.000, 1.000, 1.000)],
+        ["N9", (1.000, 1.000, 1.000)],
+    ],
+    "U": [
+        ["C4'", (1.000, 1.000, 1.000)],
+        ["P", (1.000, 1.000, 1.000)],
+        ["N1", (1.000, 1.000, 1.000)],
     ],
 }
 
+# create an array with (restype, atomtype) --> rigid_group_idx
+# and an array with (restype, atomtype, coord) for the atom positions
+restype_atom28_to_bb = np.zeros([5, 28], dtype=int)
+restype_atom28_mask = np.zeros([5, 28], dtype=np.float32)
+restype_atom28_bb_positions = np.zeros([5, 28, 3], dtype=np.float32)
+
+# 新增只含三个原子的坐标
 restype_atom3_bb_positions = np.zeros([5, 3, 3], dtype=np.float32)
+tmp_mapping = {
+    "A": {"C4'": 0, "P": 1, "N9": 2},
+    "C": {"C4'": 0, "P": 1, "N1": 2},
+    "G": {"C4'": 0, "P": 1, "N9": 2},
+    "U": {"C4'": 0, "P": 1, "N1": 2},
+}
+for res_idx, restype in enumerate(restypes):
+    for atomname, atom_position in bb_atom3_positions[restype]:
+        atom_idx = tmp_mapping[restype][atomname]
+        restype_atom3_bb_positions[res_idx, atom_idx, :] = atom_position
+
+
+# fill restype_atom28_mask
+for res_idx, restype in enumerate(restypes):
+    for atomname in residue_atoms[restype]:
+        atom_idx = atom_order[atomname]
+        restype_atom28_mask[res_idx, atom_idx] = 1
 
 def _make_bb_constants():
     """Fill the arrays above."""
     for res_idx, restype in enumerate(restypes):
         for atomname, atom_position in bb_atom3_positions[restype]:
             atom_idx = atom_order[atomname]
-            
-            restype_atom3_bb_positions[res_idx, atom_idx, :] = atom_position
+            # 只记录backbone，记为1
+            restype_atom28_to_bb[res_idx, atom_idx] = 1
+            restype_atom28_bb_positions[res_idx, atom_idx, :] = atom_position
         
 _make_bb_constants()
 

@@ -100,7 +100,7 @@ class StructureModuleTransition(nn.Module):
         return s
     
 
-
+# todo 看一下要不要所有迭代的输出
 class StructureModule(nn.Module):
     """
     修改自openfold。执行Algorithm 20 Structure module到第10行。更新backbone之后没有预测侧链
@@ -231,6 +231,14 @@ class StructureModule(nn.Module):
                 Optional [*, N_res] sequence mask
         Returns:
             A dictionary of outputs
+                frames: 
+                    [no_blocks, *, N_res, 7]
+                positions: C, P, N
+                    [no_blocks, *, N_res, 3, 3]
+                states:
+                    [no_blocks, *, N_res, C_s]
+                single:
+                    [*, N_res, C_s]                
         """
         s = evoformer_output_dict["single"]
 
@@ -321,6 +329,7 @@ class StructureModule(nn.Module):
                 evoformer_output_dict["pair"].to(s.device)
             )
 
+        # 注意是torch.stack，会在开头添加一个维度
         outputs = dict_multimap(torch.stack, outputs)
         outputs["single"] = s
 

@@ -211,6 +211,7 @@ config = mlc.ConfigDict({
     },
     # Recurring FieldReferences that can be changed globally here
     "globals": {
+        "is_e2e": True, # 采用e2e模型还是geometry模型
         "blocks_per_ckpt": blocks_per_ckpt,
         "chunk_size": chunk_size,
         # Use DeepSpeed memory-efficient attention kernel. Mutually
@@ -279,11 +280,11 @@ config = mlc.ConfigDict({
             "c_s": c_s,
             "c_z": c_z,
             "c_ipa": 16,
-            "no_heads_ipa": 12,
+            "no_heads_ipa": 8,
             "no_qk_points": 4,
             "no_v_points": 8,
             "dropout_rate": 0.1,
-            "no_blocks": 8,
+            "no_blocks": 4,
             "no_transition_layers": 1,
             "trans_scale_factor": loss_unit_distance,
             "epsilon": eps,  # 1e-12,
@@ -299,7 +300,7 @@ config = mlc.ConfigDict({
                 "c_out": 23, # todo
             },
         },
-        "geom_heads": { #要不要mask还得看
+        "geom_heads": {
             "PP": { # P(i)-P(j) distance
                 "c_z": c_z,
                 "c_hidden": c_z,
@@ -341,6 +342,10 @@ config = mlc.ConfigDict({
                 "no_blocks": 1,
                 "no_bins": 36+1,
                 "symmetrize": True,
+            },
+            "masked_msa": {
+                "c_m": c_m,
+                "c_out": 23, # todo
             },
         },
         # A negative value indicates that no early stopping will occur, i.e.
@@ -426,6 +431,11 @@ config = mlc.ConfigDict({
             "reduce": True, # 是否要除以N_res ^ 2
             "eps": eps,  # 1e-6,
             "weight": 0.5,
+        },
+        "masked_msa": {
+            "num_classes": 23, # todo
+            "eps": eps,  # 1e-8,
+            "weight": 2.0,
         },
     },
     "ema": {"decay": 0.999},
