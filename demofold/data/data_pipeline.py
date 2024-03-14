@@ -1,7 +1,7 @@
 import os
 from typing import Mapping, Optional, Sequence, Any, MutableMapping
 import numpy as np
-import parsers, mmcif_parsing
+from . import parsers, mmcif_parsing
 from .tools import rnafold
 from ..np import residue_constants as rc
 
@@ -152,13 +152,13 @@ def make_ss_features(ss_data: parsers.SS) -> FeatureDict:
     ss: [N_res, N_res, 4]
     """
     ss = np.concatenate(
-        ss_data.contact[..., None], 
-        ss_data.prob[..., None], 
+        (ss_data.contact[..., None], 
+         ss_data.prob[..., None]), 
         axis=-1
     )
     ss = np.concatenate(
-        ss, 
-        ss, 
+        (ss,
+         ss), 
         axis=-1
     )
 

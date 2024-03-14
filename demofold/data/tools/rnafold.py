@@ -4,8 +4,8 @@ import os
 import logging
 import subprocess
 
-import utils
-from ...data.second_structure import SSPredictor
+from . import utils
+from .utils import SSPredictor
 
 def _extract_DBN(ss_str: str) -> str:
     """extract dot-bracket notation"""
@@ -51,8 +51,7 @@ class RNAfold(SSPredictor):
             outfile_path = "ss.ViennaRNAss"
 
             cmd_flags = [
-                "--outfile=",
-                outfile_path,
+                "--outfile=" + outfile_path,
                 "-p",
                 "--noPS",
             ]
