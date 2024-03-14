@@ -10,6 +10,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 from demofold.data.data_pipeline import SSRunner
 
+RNAFOLD_BINARY_PATH = '/expanse/projects/itasser/jlspzw/nwentao/ss-program/ViennaRNA/2.4.18/bin/RNAfold'
 
 def parse_fasta(fasta_path):
     with open(fasta_path, "r") as fp:
@@ -63,7 +64,6 @@ def run_ss(desc_seq_pair, ss_runner: SSRunner, output_dir):
     
     os.remove(fasta_path)
 
-
     
 def main(args):
     start = time.perf_counter()
@@ -71,12 +71,12 @@ def main(args):
     desc_seq_map = parse_fasta(args.fasta_path)
     desc_seq_pairs = list(desc_seq_map.items())
     ss_runner = SSRunner(
-        rnafold_binary_path=""
+        rnafold_binary_path=RNAFOLD_BINARY_PATH
     )
     fn = partial(run_ss, ss_runner=ss_runner, output_dir=args.output_dir)
 
     # 使用进程池并行处理文件
-    logging.warning("Start parsing mmcif files...")
+    logging.warning("Start precompute ss...")
     with Pool(processes=args.no_workers) as p:
         # 使用 imap_unordered 并行处理文件
         for _ in p.imap_unordered(fn, desc_seq_pairs, chunksize=args.chunksize):
@@ -98,11 +98,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "output_dir", type=str,
-        help="Directory in which to output alignments"
-    )
-    parser.add_argument(
-        "log_path", type=str,
-        help="Path for .json log"
+        help="Directory in which to output ss"
     )
     parser.add_argument(
         "--no_workers", type=int, default=4,
