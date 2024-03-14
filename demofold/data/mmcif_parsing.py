@@ -6,11 +6,15 @@ from typing import Any, Mapping, Optional, Sequence, Tuple, Generator
 from functools import partial
 import re
 from copy import deepcopy
+import numpy as np
 
 from Bio import PDB
 from Bio.PDB.Structure import Structure
 from Bio.PDB.Residue import DisorderedResidue
 from Bio.Data import SCOPData
+
+from .errors import MultipleChainsError
+from ..np import residue_constants as rc
 
 # Type aliases:
 ChainId = str
@@ -444,3 +448,55 @@ def seq_to_can(sequence):
     sequence = re.sub(r'\([^)]*\)', 'X', sequence)
     return sequence
 
+def get_atom_coords(
+    mmcif_object: MmcifObject, 
+    ptype: PType,
+    chain_id: str
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    根据mmcif_object和ptype, chain_id获取四个原子坐标
+    return: 
+        [N_res, bb_atom_type_num, 3]
+        [N_res, bb_atom_type_num]
+    """
+    # Locate the right chain
+    chains = list(mmcif_object.structure.get_chains())
+    relevant_chains = [c for c in chains if c.id == chain_id]
+    if len(relevant_chains) != 1:
+        raise MultipleChainsError(
+            f"Expected exactly one chain in structure with id {chain_id}."
+        )
+    chain = relevant_chains[0]
+
+    # Extract the coordinates
+    num_res = len(mmcif_object.chain_to_seqres[ptype][chain_id])
+    # ! 由于无法判断残基是哪一种类型，这里选择四个原子
+    all_atom_positions = np.zeros(
+        [num_res, rc.bb_atom_type_num, 3], dtype=np.float32
+    )
+    all_atom_mask = np.zeros(
+        [num_res, rc.bb_atom_type_num], dtype=np.float32
+    )
+    for res_index in range(num_res):
+        pos = np.zeros([rc.bb_atom_type_num, 3], dtype=np.float32)
+        mask = np.zeros([rc.bb_atom_type_num], dtype=np.float32)
+        res_at_position = mmcif_object.seqres_to_structure[ptype][chain_id][res_index]
+        if not res_at_position.is_missing:
+            res = chain[
+                (
+                    res_at_position.residue_id.hetflag,
+                    res_at_position.residue_id.number,
+                    res_at_position.residue_id.insertion_code,
+                )
+            ]
+            for atom in res.get_atoms():
+                atom_name = atom.get_name()
+                x, y, z = atom.get_coord()
+                if atom_name in rc.bb_atom_order.keys():
+                    pos[rc.bb_atom_order[atom_name]] = [x, y, z]
+                    mask[rc.bb_atom_order[atom_name]] = 1.0
+
+        all_atom_positions[res_index] = pos
+        all_atom_mask[res_index] = mask
+
+    return all_atom_positions, all_atom_mask

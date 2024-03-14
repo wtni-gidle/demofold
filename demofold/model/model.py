@@ -333,4 +333,6 @@ class DemoFold(nn.Module):
 
 
 # todo 最后检查一下outputs是否都用到了，可以del不必要的变量。再次检查两种模式
+# todo 修改transform
+
 

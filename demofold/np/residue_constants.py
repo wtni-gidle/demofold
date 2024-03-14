@@ -17,6 +17,7 @@ restypes_with_x = restypes + ["X"]
 restype_order_with_x = {restype: i for i, restype in enumerate(restypes_with_x)}
 
 restypes_with_x_and_gap = restypes + ["X", "-"]
+restype_order_with_x_and_gap =  {restype: i for i, restype in enumerate(restypes_with_x_and_gap)}
 
 def sequence_to_onehot(
     sequence: str, 
@@ -26,12 +27,17 @@ def sequence_to_onehot(
     """Maps the given sequence into a one-hot encoded matrix.
 
     Args:
-      sequence: An amino acid sequence.
-      mapping: A dictionary mapping amino acids to integers.
-      map_unknown_to_x: If True, any amino acid that is not in the mapping will be
-        mapped to the unknown amino acid 'X'. If the mapping doesn't contain
-        amino acid 'X', an error will be thrown. If False, any amino acid not in
-        the mapping will throw an error.
+        sequence: 
+            An amino acid sequence.
+
+        mapping: 
+            A dictionary mapping amino acids to integers.
+
+        map_unknown_to_x: 
+            If True, any amino acid that is not in the mapping will be 
+            mapped to the unknown amino acid 'X'. If the mapping doesn't contain
+            amino acid 'X', an error will be thrown. If False, any amino acid not in 
+            the mapping will throw an error.
 
     Returns:
       A numpy array of shape (seq_len, num_unique_aas) with one-hot encoding of
@@ -51,17 +57,17 @@ def sequence_to_onehot(
 
     one_hot_arr = np.zeros((len(sequence), num_entries), dtype=np.int32)
 
-    for aa_index, aa_type in enumerate(sequence):
+    for idx, res_type in enumerate(sequence):
         if map_unknown_to_x:
-            if aa_type.isalpha() and aa_type.isupper():
-                aa_id = mapping.get(aa_type, mapping["X"])
+            if res_type.isalpha() and res_type.isupper():
+                res_id = mapping.get(res_type, mapping["X"])
             else:
                 raise ValueError(
-                    f"Invalid character in the sequence: {aa_type}"
+                    f"Invalid character in the sequence: {res_type}"
                 )
         else:
-            aa_id = mapping[aa_type]
-        one_hot_arr[aa_index, aa_id] = 1
+            res_id = mapping[res_type]
+        one_hot_arr[idx, res_id] = 1
 
     return one_hot_arr
 
@@ -118,6 +124,9 @@ bb_atom3_positions = {
         ["N1", (1.000, 1.000, 1.000)],
     ],
 }
+bb_atom_types = ["C4'", "P", "N1", "N9"]
+bb_atom_order = {atom_type: i for i, atom_type in enumerate(bb_atom_types)}
+bb_atom_type_num = len(bb_atom_types)  # := 4.
 
 # create an array with (restype, atomtype) --> rigid_group_idx
 # and an array with (restype, atomtype, coord) for the atom positions
