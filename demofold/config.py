@@ -60,8 +60,10 @@ def model_config(
 ):
     c = copy.deepcopy(config)
     # TRAINING PRESETS
-    if name == "drfold":
-        pass
+    if name == "e2e":
+        c.globals.is_e2e = True
+    elif name == "geom":
+        c.globals.is_e2e = False
     # INFERENCE PRESETS
     else:
         raise ValueError("Invalid model name")
@@ -112,62 +114,58 @@ loss_unit_distance = mlc.FieldReference(10.0, field_type=float)# trans_scale_fac
 
 NUM_RES = "num residues placeholder"
 NUM_MSA_SEQ = "msa placeholder"
-NUM_EXTRA_SEQ = "extra msa placeholder"
-NUM_TEMPLATES = "num templates placeholder"
 
 config = mlc.ConfigDict({
     "data": {
         "common": {
             "feat": {
                 "restype": [NUM_RES],
-                # "all_atom_mask": [NUM_RES, None],
-                # "all_atom_positions": [NUM_RES, None, None],
+                "all_atom_mask": [NUM_RES, None],
+                "all_atom_positions": [NUM_RES, None, None],
                 "backbone_rigid_mask": [NUM_RES],
                 "backbone_rigid_tensor": [NUM_RES, None, None],
                 "bert_mask": [NUM_MSA_SEQ, NUM_RES],
-                "is_distillation": [],
                 "msa_feat": [NUM_MSA_SEQ, NUM_RES, None],
                 "msa_mask": [NUM_MSA_SEQ, NUM_RES],
                 # "msa_row_mask": [NUM_MSA_SEQ],
-                # "no_recycling_iters": [],
-                # "pseudo_beta": [NUM_RES, None],
-                # "pseudo_beta_mask": [NUM_RES],
+                "no_recycling_iters": [],
+                "glycos_N": [NUM_RES, None],
+                "glycos_N_mask": [NUM_RES],
                 # "residue_index": [NUM_RES],
-                # "resolution": [],
+                "resolution": [],
                 "seq_length": [],
                 "seq_mask": [NUM_RES],
                 "target_feat": [NUM_RES, None],
                 "true_msa": [NUM_MSA_SEQ, NUM_RES],
                 "use_clamped_fape": [],
+                "ss": [NUM_RES, NUM_RES, None]
             },
             "masked_msa": {
-                "profile_prob": 0.1,
-                "same_prob": 0.1,
-                "uniform_prob": 0.1,
+                "same_prob": 0.15,
+                "uniform_prob": 0.15,
             },
             "max_recycling_iters": 3,
-            # "unsupervised_features": [
-            #     "aatype",
-            #     "residue_index",
-            #     "msa",
-            #     "num_alignments",
-            #     "seq_length",
-            #     "between_segment_residues",
-            #     "deletion_matrix",
-            #     "no_recycling_iters",
-            # ],
+            "unsupervised_features": [
+                "restype",
+                "msa",
+                "ss",
+                "num_alignments",
+                "seq_length",
+                "between_segment_residues",
+                "no_recycling_iters",
+            ],
+
         },
         "seqemb_mode": { # Configuration for sequence embedding mode
             "enabled": False, # If True, use seq emb instead of MSA
         },
         "supervised": {
-            # "clamp_prob": 0.9,
+            "clamp_prob": 0.9,
             "supervised_features": [
                 "all_atom_mask",
                 "all_atom_positions",
                 "resolution",
                 "use_clamped_fape",
-                "is_distillation",
             ],
         },
         "predict": {
@@ -236,8 +234,8 @@ config = mlc.ConfigDict({
     "model": {
         "_mask_trans": False,
         "input_embedder": {
-            "tf_dim": 22, # todo 论文里是21
-            "msa_dim": 49, # todo
+            "tf_dim": 6, # todo 论文里是21, openfold多了一个between_segment_residues
+            "msa_dim": 7, # todo
             "c_m": c_m,
             "c_z": c_z,
             "max_len_seq": 800,
@@ -297,7 +295,7 @@ config = mlc.ConfigDict({
             },
             "masked_msa": {
                 "c_m": c_m,
-                "c_out": 23, # todo
+                "c_out": 4+3, # todo
             },
         },
         "geom_heads": {
@@ -345,7 +343,7 @@ config = mlc.ConfigDict({
             },
             "masked_msa": {
                 "c_m": c_m,
-                "c_out": 23, # todo
+                "c_out": 4+3, # todo
             },
         },
         # A negative value indicates that no early stopping will occur, i.e.
@@ -374,7 +372,7 @@ config = mlc.ConfigDict({
             "weight": 1.5,
         },
         "masked_msa": {
-            "num_classes": 23, # todo
+            "num_classes": 4+3, 
             "eps": eps,  # 1e-8,
             "weight": 2.0,
         },
@@ -433,7 +431,7 @@ config = mlc.ConfigDict({
             "weight": 0.5,
         },
         "masked_msa": {
-            "num_classes": 23, # todo
+            "num_classes": 4+3, 
             "eps": eps,  # 1e-8,
             "weight": 2.0,
         },

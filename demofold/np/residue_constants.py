@@ -137,14 +137,14 @@ restype_atom28_bb_positions = np.zeros([5, 28, 3], dtype=np.float32)
 # 新增只含三个原子的坐标
 restype_atom3_bb_positions = np.zeros([5, 3, 3], dtype=np.float32)
 tmp_mapping = {
-    "A": {"C4'": 0, "P": 1, "N9": 2},
-    "C": {"C4'": 0, "P": 1, "N1": 2},
-    "G": {"C4'": 0, "P": 1, "N9": 2},
-    "U": {"C4'": 0, "P": 1, "N1": 2},
+    "A": ["C4'", "P", "N9"],
+    "C": ["C4'", "P", "N1"],
+    "G": ["C4'", "P", "N9"],
+    "U": ["C4'", "P", "N1"],
 }
 for res_idx, restype in enumerate(restypes):
     for atomname, atom_position in bb_atom3_positions[restype]:
-        atom_idx = tmp_mapping[restype][atomname]
+        atom_idx = tmp_mapping[restype].index(atomname)
         restype_atom3_bb_positions[res_idx, atom_idx, :] = atom_position
 
 

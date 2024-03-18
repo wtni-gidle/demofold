@@ -3,7 +3,7 @@ from typing import Dict, List, Tuple
 import torch
 import torch.nn as nn
 
-from ..utils.feats import atom_position_fn
+from ..utils.feats import glycos_N_fn
 from ..utils.tensor_utils import (
     add,
     tensor_tree_map,
@@ -145,8 +145,8 @@ class DemoFold(nn.Module):
             x_prev = lit_positions[feats["restype"], ...]
 
         # [*, N_res, 3] predicted N coordinates
-        glycos_N_x_prev = atom_position_fn(
-            "N", x_prev, None
+        glycos_N_x_prev = glycos_N_fn(
+            feats["restype"], x_prev, None
         ).to(dtype=z.dtype)
 
         del x_prev

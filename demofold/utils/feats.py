@@ -6,25 +6,34 @@ from .rigid_utils import Rigid
 from ..np import residue_constants as rc
 
 
-
-def atom_position_fn(
-    atom: str, 
+def glycos_N_fn(
+    restype: torch.Tensor, 
     all_atom_positions: torch.Tensor, 
-    all_atom_masks: torch.Tensor
+    all_atom_mask: torch.Tensor
 ):
+    """Create glycos_N features."""
     """
-    目前只需要用到C4', P, N1/N9三个原子的坐标, 因此先只用三个原子代替全原子
-    all_atom_positions [..., N_res, 3, 3] 只含三个原子, 顺序为C4', P, N1/N9
-    atom: "N" or "C" or "P"
+    目前只需要用到C4', P, N1/N9三个原子的坐标, 因此先只用四个原子代替全原子
+    all_atom_positions [..., N_res, bb_atom_type_num, 3] 只含四个原子, 顺序为bb_atom_order
     """
-    atom_mapping = {atom: idx for idx, atom in enumerate(["C", "P", "N"])}
-    atom_idx = atom_mapping[atom]
-    atom_position = all_atom_positions[..., atom_idx, :]
+    is_purine = (restype == rc.restype_order["A"]) | (restype == rc.restype_order["G"])
+    n1_idx = rc.bb_atom_order["N1"]
+    n9_idx = rc.bb_atom_order["N9"]
+    glycos_N = torch.where(
+        torch.tile(is_purine[..., None], [1] * len(is_purine.shape) + [3]),
+        all_atom_positions[..., n9_idx, :],
+        all_atom_positions[..., n1_idx, :],
+    )
 
-    if all_atom_masks is not None:
-        return atom_position, all_atom_masks[..., atom_idx]
+    if all_atom_mask is not None:
+        glycos_N_mask = torch.where(
+            is_purine, 
+            all_atom_mask[..., n9_idx], 
+            all_atom_mask[..., n1_idx]
+        )
+        return glycos_N, glycos_N_mask
     else:
-        return atom_position
+        return glycos_N
 
 
 # 先写一个frame即bockbone的函数
