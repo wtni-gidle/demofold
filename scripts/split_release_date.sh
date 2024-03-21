@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name="precompute_ss"
+#SBATCH --job-name="split_date"
 #SBATCH --partition=shared
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem-per-cpu=512M
-#SBATCH --output="precompute_ss.%j.%N.out"
-#SBATCH --error="precompute_ss.%j.%N.out"
+#SBATCH --output="split_date.%j.%N.out"
+#SBATCH --error="split_date.%j.%N.out"
 #SBATCH --account=mia174
 #SBATCH --export=ALL
 #SBATCH -t 00:10:00
