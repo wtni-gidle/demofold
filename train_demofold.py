@@ -13,7 +13,6 @@ import torch
 from demofold.config import model_config
 from demofold.data.data_modules import DemoFoldDataModule
 from demofold.model.model import DemoFold
-from demofold.np import residue_constants
 from demofold.utils.argparse_utils import remove_arguments
 from demofold.utils.callbacks import (
     EarlyStoppingVerbose,
@@ -22,7 +21,6 @@ from demofold.utils.exponential_moving_average import ExponentialMovingAverage
 from demofold.utils.loss import GeometryLoss, StructureLoss
 from demofold.utils.lr_schedulers import AlphaFoldLRScheduler
 from demofold.utils.seed import seed_everything
-from demofold.utils.superimposition import superimpose
 from demofold.utils.tensor_utils import tensor_tree_map
 # 这些指标就可以替换了
 # from demofold.utils.validation_metrics import (
