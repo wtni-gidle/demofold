@@ -1147,6 +1147,36 @@ class Rigid:
         return Rigid(rots, trans)
     
     @staticmethod
+    def from_3_points_svd(
+        atom_P: torch.Tensor,
+        C4_prime: torch.Tensor,
+        glycos_N: torch.Tensor
+    ) -> Rigid:
+        """
+        Args:
+            p_neg_x_axis: [*, 3] coordinates
+            origin: [*, 3] coordinates used as frame origins
+            p_xy_plane: [*, 3] coordinates
+            eps: Small epsilon value
+        Returns:
+            A transformation object of shape [*]
+        """
+        center = (atom_P + C4_prime + glycos_N) / 3.0
+        matrix = torch.stack(
+            (
+                atom_P - center, 
+                C4_prime - center, 
+                glycos_N - center
+            ), 
+            dim=-1
+        )
+        U, _, Vh = torch.linalg.svd(matrix)
+        rots = torch.matmul(U, Vh)
+        rot_obj = Rotation(rot_mats=rots, quats=None)
+
+        return Rigid(rot_obj, center)
+    
+    @staticmethod
     def from_3_points(
         p_neg_x_axis: torch.Tensor, 
         origin: torch.Tensor, 

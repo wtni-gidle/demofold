@@ -25,11 +25,11 @@ from demofold.utils.seed import seed_everything
 from demofold.utils.superimposition import superimpose
 from demofold.utils.tensor_utils import tensor_tree_map
 # 这些指标就可以替换了
-from demofold.utils.validation_metrics import (
-    drmsd,
-    gdt_ts,
-    gdt_ha,
-)
+# from demofold.utils.validation_metrics import (
+#     drmsd,
+#     gdt_ts,
+#     gdt_ha,
+# )
 from scripts.zero_to_fp32 import (
     get_fp32_state_dict_from_zero_checkpoint,
     get_global_step_from_zero_checkpoint
@@ -74,21 +74,21 @@ class DemoFoldWrapper(pl.LightningModule):
                     indiv_loss,
                     on_step=False, on_epoch=True, logger=True,
                 )
+        # ! 这里暂停, log只输出loss
+        # with torch.no_grad():
+        #     # todo
+        #     other_metrics = self._compute_validation_metrics(
+        #         batch, 
+        #         outputs,
+        #         superimposition_metrics=(not train)
+        #     )
 
-        with torch.no_grad():
-            # todo
-            other_metrics = self._compute_validation_metrics(
-                batch, 
-                outputs,
-                superimposition_metrics=(not train)
-            )
-
-        for k,v in other_metrics.items():
-            self.log(
-                f"{phase}/{k}",
-                torch.mean(v),
-                on_step=False, on_epoch=True, logger=True
-            )
+        # for k,v in other_metrics.items():
+        #     self.log(
+        #         f"{phase}/{k}",
+        #         torch.mean(v),
+        #         on_step=False, on_epoch=True, logger=True
+        #     )
 
     def training_step(self, batch, batch_idx):
         if(self.ema.device != batch["restype"].device):
@@ -145,50 +145,50 @@ class DemoFoldWrapper(pl.LightningModule):
         self.model.load_state_dict(self.cached_weights)
         self.cached_weights = None
 
-    # todo
-    def _compute_validation_metrics(self, 
-        batch, 
-        outputs, 
-        superimposition_metrics=False
-    ):
-        metrics = {}
+    # # todo
+    # def _compute_validation_metrics(self, 
+    #     batch, 
+    #     outputs, 
+    #     superimposition_metrics=False
+    # ):
+    #     metrics = {}
         
-        gt_coords = batch["all_atom_positions"]
-        pred_coords = outputs["final_atom_positions"]
-        all_atom_mask = batch["all_atom_mask"]
+    #     gt_coords = batch["all_atom_positions"]
+    #     pred_coords = outputs["final_atom_positions"]
+    #     all_atom_mask = batch["all_atom_mask"]
     
-        # This is super janky for superimposition. Fix later
-        gt_coords_masked = gt_coords * all_atom_mask[..., None]
-        pred_coords_masked = pred_coords * all_atom_mask[..., None]
-        ca_pos = residue_constants.atom_order["CA"]
-        gt_coords_masked_ca = gt_coords_masked[..., ca_pos, :]
-        pred_coords_masked_ca = pred_coords_masked[..., ca_pos, :]
-        all_atom_mask_ca = all_atom_mask[..., ca_pos]
+    #     # This is super janky for superimposition. Fix later
+    #     gt_coords_masked = gt_coords * all_atom_mask[..., None]
+    #     pred_coords_masked = pred_coords * all_atom_mask[..., None]
+    #     ca_pos = residue_constants.atom_order["CA"]
+    #     gt_coords_masked_ca = gt_coords_masked[..., ca_pos, :]
+    #     pred_coords_masked_ca = pred_coords_masked[..., ca_pos, :]
+    #     all_atom_mask_ca = all_atom_mask[..., ca_pos]
    
-        drmsd_ca_score = drmsd(
-            pred_coords_masked_ca,
-            gt_coords_masked_ca,
-            mask=all_atom_mask_ca, # still required here to compute n
-        )
+    #     drmsd_ca_score = drmsd(
+    #         pred_coords_masked_ca,
+    #         gt_coords_masked_ca,
+    #         mask=all_atom_mask_ca, # still required here to compute n
+    #     )
    
-        metrics["drmsd_ca"] = drmsd_ca_score
+    #     metrics["drmsd_ca"] = drmsd_ca_score
     
-        if(superimposition_metrics):
-            superimposed_pred, alignment_rmsd = superimpose(
-                gt_coords_masked_ca, pred_coords_masked_ca, all_atom_mask_ca,
-            )
-            gdt_ts_score = gdt_ts(
-                superimposed_pred, gt_coords_masked_ca, all_atom_mask_ca
-            )
-            gdt_ha_score = gdt_ha(
-                superimposed_pred, gt_coords_masked_ca, all_atom_mask_ca
-            )
+    #     if(superimposition_metrics):
+    #         superimposed_pred, alignment_rmsd = superimpose(
+    #             gt_coords_masked_ca, pred_coords_masked_ca, all_atom_mask_ca,
+    #         )
+    #         gdt_ts_score = gdt_ts(
+    #             superimposed_pred, gt_coords_masked_ca, all_atom_mask_ca
+    #         )
+    #         gdt_ha_score = gdt_ha(
+    #             superimposed_pred, gt_coords_masked_ca, all_atom_mask_ca
+    #         )
 
-            metrics["alignment_rmsd"] = alignment_rmsd
-            metrics["gdt_ts"] = gdt_ts_score
-            metrics["gdt_ha"] = gdt_ha_score
+    #         metrics["alignment_rmsd"] = alignment_rmsd
+    #         metrics["gdt_ts"] = gdt_ts_score
+    #         metrics["gdt_ha"] = gdt_ha_score
     
-        return metrics
+    #     return metrics
 
     def configure_optimizers(self, 
         learning_rate: float = 1e-3,
@@ -397,6 +397,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--val_ss_dir", type=str, default=None,
         help="Directory containing precomputed validation ss"
+    )
+    parser.add_argument(
+        "--train_filter_path", type=str, default=None,
+    )
+    parser.add_argument(
+        "--val_filter_path", type=str, default=None,
     )
     parser.add_argument(
         "--seed", type=int, default=None,

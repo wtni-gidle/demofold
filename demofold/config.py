@@ -131,6 +131,10 @@ config = mlc.ConfigDict({
                 "no_recycling_iters": [],
                 "glycos_N": [NUM_RES, None],
                 "glycos_N_mask": [NUM_RES],
+                "C4_prime": [NUM_RES, None],
+                "C4_prime_mask": [NUM_RES],
+                "atom_P": [NUM_RES, None],
+                "atom_P_mask": [NUM_RES],
                 # "residue_index": [NUM_RES],
                 "resolution": [],
                 "seq_length": [],
@@ -141,8 +145,8 @@ config = mlc.ConfigDict({
                 "ss": [NUM_RES, NUM_RES, None]
             },
             "masked_msa": {
-                "same_prob": 0.15,
-                "uniform_prob": 0.15,
+                "same_prob": 0.5, # todo 我的msa只有一条, 担心bert mask学习太难, 调整了一些比率
+                "uniform_prob": 0.1, # todo 我的msa只有一条, 担心bert mask学习太难, 调整了一些比率
             },
             "max_recycling_iters": 3,
             "unsupervised_features": [
@@ -170,7 +174,7 @@ config = mlc.ConfigDict({
         },
         "predict": {
             "fixed_size": True,
-            "masked_msa_replace_fraction": 0.15,
+            "masked_msa_replace_fraction": 0.1, # todo 我的msa只有一条, 担心bert mask学习太难, 调整了一些比率
             "crop": False,
             "crop_size": None,
             "spatial_crop_prob": None,
@@ -243,7 +247,7 @@ config = mlc.ConfigDict({
             "pos_wsize_2d": 64,
         },
         "ss_embedder": {
-            "ss_dim": 4, # todo
+            "ss_dim": 4, 
             "c_z": c_z,
         },
         "recycling_embedder": {
@@ -374,7 +378,7 @@ config = mlc.ConfigDict({
         "masked_msa": {
             "num_classes": 4+3, 
             "eps": eps,  # 1e-8,
-            "weight": 2.0,
+            "weight": 1.0,
         },
         # "eps": eps,
     },

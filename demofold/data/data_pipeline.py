@@ -60,6 +60,8 @@ def make_mmcif_features(
     resolution
     release_date
     """
+    # 本来应该是使用转化为X的序列, 但是rc.sequence_to_onehot包含了这一步, 
+    # 因此可以直接使用这里的序列
     input_sequence = mmcif_object.chain_to_seqres[ptype][chain_id]
     # {file_id}_{chain_id}
     description = "_".join([mmcif_object.file_id, chain_id])

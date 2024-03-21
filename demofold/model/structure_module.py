@@ -9,6 +9,7 @@ from .ipa import InvariantPointAttention
 from ..utils.rigid_utils import Rotation, Rigid
 from ..utils.tensor_utils import dict_multimap
 from ..utils.feats import frame_and_literature_positions_to_atom3_pos
+from ..np import residue_constants as rc
 from ..np.residue_constants import restype_atom3_bb_positions
 
 
@@ -304,8 +305,8 @@ class StructureModule(nn.Module):
             backb_to_global = backb_to_global.scale_translation(
                 self.trans_scale_factor
             )
-            # [*, N_res, 3, 3]
-            pred_xyz = self.frame_and_literature_positions_to_atom3_pos(
+            # [*, N_res, bb_atom_type_num, 3]
+            pred_xyz = self.frame_and_literature_positions_to_atom4_pos(
                 backb_to_global,
                 restype
             )
@@ -344,7 +345,7 @@ class StructureModule(nn.Module):
             self.register_buffer(
                 "lit_positions",
                 torch.tensor(
-                    restype_atom3_bb_positions,
+                    rc.restype_atom4_bb_positions,
                     dtype=float_dtype,
                     device=device,
                     requires_grad=False,
@@ -352,7 +353,7 @@ class StructureModule(nn.Module):
                 persistent=False,
             )
 
-    def frame_and_literature_positions_to_atom3_pos(
+    def frame_and_literature_positions_to_atom4_pos(
         self, 
         backb_to_global: Rigid,
         restype: torch.Tensor

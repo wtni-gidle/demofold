@@ -9,13 +9,11 @@ from typing import Optional, Sequence, Any, Union
 import ml_collections as mlc
 import pytorch_lightning as pl
 import torch
-from torch.utils.data import Dataset, DataLoader, RandomSampler
-from ..np.residue_constants import restypes
+from torch.utils.data import Dataset, DataLoader
 from . import (
     data_pipeline,
     feature_pipeline,
     mmcif_parsing,
-    templates,
 )
 from ..utils.tensor_utils import dict_multimap
 from ..utils.tensor_utils import (
@@ -31,6 +29,7 @@ class DemoFoldSingleDataset(Dataset):
         mode: str = "train",
         _output_raw: bool = False,
         _structure_index: Optional[Any] = None,
+        filter_path: Optional[str] = None
     ):
         """
         alignment_dir是放置所有file_id的alignment的dir, 即alignment_dir/file_id_chain_id/
@@ -91,6 +90,13 @@ class DemoFoldSingleDataset(Dataset):
         self.supported_exts = [".cif"]
 
         self._chain_ids = list(os.listdir(ss_dir))
+        if filter_path is not None:
+            with open(filter_path, "r") as f:
+                chains_to_include = set([l.strip() for l in f.readlines()])
+
+            self._chain_ids = [
+                c for c in self._chain_ids if c in chains_to_include
+            ]
 
         self._chain_id_to_idx_dict = {
             chain: i for i, chain in enumerate(self._chain_ids)
@@ -239,7 +245,7 @@ mmcif: N_res为实际的crop_size,
     true_msa: [1, N_res] 原来的msa
         每个值是ACGUX-到012345, 但是我们是单序列, 不可能有5
     bert_mask: [1, N_res] 1为被replace
-    msa_feat: [N_res, 7]
+    msa_feat: [1, N_res, 7]
     target_feat: [N_res, 6]第一个是between_segment_residues
     ss: [N_res, N_res, 4]
     # num_alignments: [1]
@@ -253,6 +259,8 @@ mmcif: N_res为实际的crop_size,
     resolution
     glycos_N: [N_res, 3]
     glycos_N_mask: [N_res]
+    atom_P
+    C4_prime
     backbone_rigid_tensor: [N_res, 4, 4]
     backbone_rigid_mask: [N_res]
     use_clamped_fape: 是否使用clamped_fape
@@ -471,6 +479,8 @@ class DemoFoldDataModule(pl.LightningDataModule):
         predict_ss_dir: Optional[str] = None,
         batch_seed: Optional[int] = None,
         train_epoch_len: int = 50000,
+        train_filter_path: str = None,
+        val_filter_path: str = None,
         **kwargs
     ):
         super().__init__()
@@ -484,6 +494,8 @@ class DemoFoldDataModule(pl.LightningDataModule):
         self.predict_ss_dir = predict_ss_dir
         self.batch_seed = batch_seed
         self.train_epoch_len = train_epoch_len
+        self.train_filter_path = train_filter_path
+        self.val_filter_path = val_filter_path
 
         if self.train_data_dir is None and self.predict_data_dir is None:
             raise ValueError(
@@ -519,6 +531,7 @@ class DemoFoldDataModule(pl.LightningDataModule):
                 data_dir=self.train_data_dir,
                 ss_dir=self.train_ss_dir,
                 mode="train",
+                filter_path=self.train_filter_path
             )
 
             datasets = [train_dataset]
@@ -542,6 +555,7 @@ class DemoFoldDataModule(pl.LightningDataModule):
                     data_dir=self.val_data_dir,
                     ss_dir=self.val_ss_dir,
                     mode="eval",
+                    filter_path=self.val_filter_path
                 )
             else:
                 self.eval_dataset = None

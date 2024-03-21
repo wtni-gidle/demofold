@@ -89,7 +89,9 @@ class DemoFold(nn.Module):
         # Prep some features
         seq_mask = feats["seq_mask"]
         msa_mask = feats["msa_mask"]
-        # 这里可以看出来和drfold不同，drfold是1代表gap，这里是0代表gap
+        # 这里可以看出来和drfold不同，drfold是1代表pad，这里是0代表pad
+        # 在这里构建pair_mask, 并没有像seq_mask和msa_mask一样
+        # 在数据预处理时设置ss_mask, 考虑这些mask的作用不需要设置ss_mask
         pair_mask = seq_mask[..., None] * seq_mask[..., None, :]
 
         # Initialize the MSA and pair representations
@@ -114,7 +116,8 @@ class DemoFold(nn.Module):
         m_1_prev, z_prev, x_prev = reversed([prevs.pop() for _ in range(3)])
 
         # Initialize the recycling embeddings, if needs be 
-        if None in [m_1_prev, z_prev, x_prev]:
+        # todo 这里做了偷懒修改
+        if m_1_prev is None:
             # [*, N_res, C_m]
             m_1_prev = m.new_zeros(
                 (*batch_dims, n_res, self.config.input_embedder.c_m),
@@ -130,14 +133,14 @@ class DemoFold(nn.Module):
             # [*, N_res, atom_type_num, 3]
             # 这里不同于openfold的全原子, 只使用三个原子
             x_prev = z.new_zeros(
-                (*batch_dims, n_res, 3, 3),
+                (*batch_dims, n_res, rc.bb_atom_type_num, 3),
                 requires_grad=False,
             )
         
         # DRfold geometry
         if not self.globals.is_e2e:
             lit_positions = torch.tensor(
-                rc.restype_atom3_bb_positions, 
+                rc.restype_atom4_bb_positions, 
                 dtype=z.dtype,
                 device=z.device,
                 requires_grad=False,
@@ -234,7 +237,7 @@ class DemoFold(nn.Module):
                 inplace_safe=inplace_safe,
                 _offload_inference=self.globals.offload_inference,
             )
-            # [*, N_res, 3, 3]
+            # [*, N_res, bb_atom_type_num, 3]
             outputs["final_atom_positions"] = outputs["sm"]["positions"][-1]
             outputs["final_affine_tensor"] = outputs["sm"]["frames"][-1]
 
@@ -246,7 +249,7 @@ class DemoFold(nn.Module):
         # [*, N_res, N_res, C_z]
         z_prev = outputs["pair"]
 
-        # [*, N_res, 3, 3]
+        # [*, N_res, bb_atom_type_num, 3]
         x_prev = None
         if self.globals.is_e2e:
             x_prev = outputs["final_atom_positions"]

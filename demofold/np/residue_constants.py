@@ -104,24 +104,24 @@ residue_atoms = {
 # backbone上的三个原子的坐标
 bb_atom3_positions = {
     "A": [
-        ["C4'", (1.000, 1.000, 1.000)],
-        ["P", (1.000, 1.000, 1.000)],
-        ["N9", (1.000, 1.000, 1.000)],
+        ["C4'", (-0.8031747, 1.3708649, -0.56768906)],
+        ["P", (2.3240912, -0.80317456, -1.5209152)],
+        ["N9", (-1.520915, -0.5676891, 2.088603)],
     ],
     "C": [
-        ["C4'", (1.000, 1.000, 1.000)],
-        ["P", (1.000, 1.000, 1.000)],
-        ["N1", (1.000, 1.000, 1.000)],
+        ["C4'", (-0.78803474, 1.3541472, -0.566115)],
+        ["P", (2.35021, -0.7880346, -1.5621773)],
+        ["N1", (-1.5621774, -0.56611556, 2.1282897)],
     ],
     "G": [
-        ["C4'", (1.000, 1.000, 1.000)],
-        ["P", (1.000, 1.000, 1.000)],
-        ["N9", (1.000, 1.000, 1.000)],
+        ["C4'", (-0.8028024, 1.3702725, -0.5674678)],
+        ["P", (2.3250363, -0.80280226, -1.5222337)],
+        ["N9", (-1.5222336, -0.5674678, 2.0897026)],
     ],
     "U": [
-        ["C4'", (1.000, 1.000, 1.000)],
-        ["P", (1.000, 1.000, 1.000)],
-        ["N1", (1.000, 1.000, 1.000)],
+        ["C4'", (-0.7881318, 1.3542684, -0.5661326)],
+        ["P", (2.3493478, -0.7881313, -1.5612125)],
+        ["N1", (-1.5612122, -0.5661328, 2.1273444)],
     ],
 }
 bb_atom_types = ["C4'", "P", "N1", "N9"]
@@ -146,6 +146,13 @@ for res_idx, restype in enumerate(restypes):
     for atomname, atom_position in bb_atom3_positions[restype]:
         atom_idx = tmp_mapping[restype].index(atomname)
         restype_atom3_bb_positions[res_idx, atom_idx, :] = atom_position
+
+# 新增只含四个原子的坐标
+restype_atom4_bb_positions = np.zeros([5, 4, 3], dtype=np.float32)
+for res_idx, restype in enumerate(restypes):
+    for atomname, atom_position in bb_atom3_positions[restype]:
+        atom_idx = bb_atom_order[atomname]
+        restype_atom4_bb_positions[res_idx, atom_idx, :] = atom_position
 
 
 # fill restype_atom28_mask

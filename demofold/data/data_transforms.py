@@ -6,9 +6,9 @@ from operator import add
 import numpy as np
 import torch
 
-from ..config import NUM_RES, NUM_EXTRA_SEQ, NUM_TEMPLATES, NUM_MSA_SEQ
+from ..config import NUM_RES, NUM_MSA_SEQ
 from ..np import residue_constants as rc
-from ..utils.rigid_utils import Rotation, Rigid
+from ..utils.rigid_utils import Rigid
 from ..utils.tensor_utils import (
     tree_map,
     tensor_tree_map,
@@ -145,6 +145,7 @@ def get_backbone_frames(protein: TensorDict, eps=1e-8):
     restype_bb_base_atom4_idx = restype.new_tensor(
         restype_bb_base_atom4_idx
     )
+    # [*, 5, 3]
     restype_bb_base_atom4_idx = (
         restype_bb_base_atom4_idx.view(
             *((1,) * batch_dims), *restype_bb_base_atom4_idx.shape
@@ -156,6 +157,7 @@ def get_backbone_frames(protein: TensorDict, eps=1e-8):
         dim=-2, # 这里与openfold不同, 因为我们只有一个组
         no_batch_dims=batch_dims,
     )
+    # [*, N_res, 3, 3]  C, P, N
     base_atom_pos = batched_gather(
         all_atom_positions,
         residx_bb_base_atom4_idx,
@@ -183,12 +185,10 @@ def get_backbone_frames(protein: TensorDict, eps=1e-8):
         no_batch_dims=len(all_atom_mask.shape[:-1]),
     )
     gt_exists = torch.min(gt_atoms_exist, dim=-1)[0] * bb_exists
-    # todo这里需要改
-    gt_bb = Rigid.from_3_points(
-        p_neg_x_axis=base_atom_pos[..., 0, :],
-        origin=base_atom_pos[..., 1, :],
-        p_xy_plane=base_atom_pos[..., 2, :],
-        eps=eps,
+    gt_bb = Rigid.from_3_points_svd(
+        atom_P=base_atom_pos[..., 1, :],  # P
+        C4_prime=base_atom_pos[..., 0, :],  # C
+        glycos_N=base_atom_pos[..., 2, :],  # N
     )
     gt_bb_tensor = gt_bb.to_tensor_4x4()
     
@@ -214,16 +214,19 @@ def glycos_N_fn(
     )
 
     if all_atom_mask is not None:
+        # ! 如果是X, 则mask相应位置, 因为不知道是N1还是N9, 其他原子的提取不影响
+        is_unknown = restype == rc.restype_order_with_x["X"]
         glycos_N_mask = torch.where(
             is_purine, 
             all_atom_mask[..., n9_idx], 
             all_atom_mask[..., n1_idx]
         )
+        glycos_N_mask[is_unknown] = 0.0
         return glycos_N, glycos_N_mask
     else:
         return glycos_N
 
-
+# ! 添加了其他原子
 def make_glycos_N(protein: TensorDict):
     """Create pseudo-beta (alpha for glycine) position and mask."""
     (
@@ -234,8 +237,39 @@ def make_glycos_N(protein: TensorDict):
         protein["all_atom_positions"],
         protein["all_atom_mask"],
     )
+    (
+        protein["C4_prime"], 
+        protein["C4_prime_mask"],
+    ) = make_atom(
+        "C4'",
+        protein["all_atom_positions"],
+        protein["all_atom_mask"],
+    )
+    (
+        protein["atom_P"], 
+        protein["atom_P_mask"],
+    ) = make_atom(
+        "P",
+        protein["all_atom_positions"],
+        protein["all_atom_mask"],
+    )
     
     return protein
+
+def make_atom(
+    atom_name: str,
+    all_atom_positions: torch.Tensor, 
+    all_atom_mask: torch.Tensor
+):
+    atom_idx = rc.bb_atom_order[atom_name]
+    # [..., N_res, 4, 3]
+    position = all_atom_positions[..., atom_idx, :]
+
+    if all_atom_mask is not None:
+        mask = all_atom_mask[..., atom_idx]
+        return position, mask
+    else:
+        return position
 
 
 def make_one_hot(

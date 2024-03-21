@@ -13,6 +13,9 @@ from .tensor_utils import (
     tensor_tree_map
 )
 from .geometry_utils import calc_dihedral
+from ..np import residue_constants as rc
+from ..data.data_transforms import make_atom, glycos_N_fn
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -188,9 +191,13 @@ def compute_fape(
 
 #todo reduce, 以及点的坐标，还有batch
 def backbone_loss(
+    restype: torch.Tensor,
     backbone_rigid_tensor: torch.Tensor,
     backbone_rigid_mask: torch.Tensor,
     traj: torch.Tensor,
+    all_atom_positions: torch.Tensor,
+    all_atom_mask: torch.Tensor,
+    pred_atom_positions: torch.Tensor,
     pair_mask: Optional[torch.Tensor] = None,
     use_clamped_fape: Optional[torch.Tensor] = None,
     clamp_distance: float = 10.0,
@@ -202,12 +209,18 @@ def backbone_loss(
     """
     Parameters
     ----------
+    restype: torch.Tensor
+        [*, N_res]
     backbone_rigid_tensor : torch.Tensor
-        [N_res, 4, 4]
+        [*, N_res, 4, 4]
     backbone_rigid_mask : torch.Tensor
-        [N_res, ]
+        [*, N_res, ]
     traj : torch.Tensor
-        [*, N_res, 4, 4] or [*, N_res, 7]
+        [no_blocks, *, N_res, 4, 4]
+    bb_atom_pos_pred
+        [no_blocks, *, N_res, bb_atom_type_num, 3]
+    bb_atom_pos_gt
+        [*, N_res, bb_atom_type_num, 3]
     pair_mask : Optional[torch.Tensor], optional
         _description_, by default None
     use_clamped_fape : Optional[torch.Tensor], optional
@@ -244,14 +257,34 @@ def backbone_loss(
     # outright. This one hasn't been composed a bunch of times, though, so
     # it might be fine.
     gt_frame = Rigid.from_tensor_4x4(backbone_rigid_tensor)
+    # [...]
+    batch_dims = gt_frame.shape[:-3]
+    
+    # ! 凑合着用吧...以后再改
+    C4_prime, C4_prime_mask = make_atom("C4'", all_atom_positions, all_atom_mask)
+    atom_P, atom_P_mask = make_atom("P", all_atom_positions, all_atom_mask)
+    glycos_N, glycos_N_mask = glycos_N_fn(restype, all_atom_positions, all_atom_mask)
+    # [..., N_res * 3, 3]
+    bb_atom_pos_gt = torch.stack((C4_prime, atom_P, glycos_N), dim=-2).reshape(*batch_dims, -1, 3)
+    # [..., N_res * 3]
+    bb_atom_mask = torch.stack((C4_prime_mask, atom_P_mask, glycos_N_mask), dim=-1).reshape(*batch_dims, -1)
+
+    C4_prime_pred = make_atom("C4'", pred_atom_positions)
+    atom_P_pred = make_atom("P", pred_atom_positions)
+    restype = torch.tile(restype[None], [pred_atom_positions.shape[0]] + [1] * len(restype.shape))
+    glycos_N_pred = glycos_N_fn(restype, pred_atom_positions)
+    # [no_blocks, ..., N_res, 3, 3]
+    bb_atom_pos_pred = torch.stack((C4_prime_pred, atom_P_pred, glycos_N_pred), dim=-2).reshape(
+        *pred_atom_positions.shape[:-3], -1, 3
+    )
 
     fape_loss = compute_fape(
         pred_frame,
         gt_frame[None],
         backbone_rigid_mask[None],
-        pred_frame.get_trans(),
-        gt_frame[None].get_trans(),
-        backbone_rigid_mask[None],
+        bb_atom_pos_pred,
+        bb_atom_pos_gt[None],
+        bb_atom_mask[None],
         pair_mask=pair_mask,
         l1_clamp_distance=clamp_distance,
         length_scale=loss_unit_distance,
@@ -263,9 +296,9 @@ def backbone_loss(
             pred_frame,
             gt_frame[None],
             backbone_rigid_mask[None],
-            pred_frame.get_trans(),
-            gt_frame[None].get_trans(),
-            backbone_rigid_mask[None],
+            bb_atom_pos_pred,
+            bb_atom_pos_gt[None],
+            bb_atom_mask[None],
             pair_mask=pair_mask,
             l1_clamp_distance=None,
             length_scale=loss_unit_distance,
@@ -291,6 +324,7 @@ def fape_loss(
     traj = out["sm"]["frames"]
     bb_loss = backbone_loss(
             traj=traj,
+            pred_atom_positions=out["sm"]["positions"],
             **{**batch, **config.backbone},
         )
 
@@ -357,9 +391,11 @@ class StructureLoss(nn.Module):
         loss_fns = {
             "distogram": lambda: distogram_loss(
                 logits=out["distogram_logits"],
-                atom_position=batch["atom_N"],
+                atom_position=batch["glycos_N"],
+                atom_mask=batch["glycos_N_mask"]
                 **{**batch, **self.config.distogram},
             ),
+            # todo
             "fape": lambda: fape_loss(
                 out,
                 batch,
@@ -436,8 +472,9 @@ class StructureLoss(nn.Module):
 def PCCP_dihedral_loss(
     logits: torch.Tensor,
     atom_P: torch.Tensor,
-    atom_C: torch.Tensor,
-    atom_mask: torch.Tensor,
+    C4_prime: torch.Tensor,
+    atom_P_mask: torch.Tensor,
+    C4_prime_mask: torch.Tensor,
     min_bin: float,
     max_bin: float,
     no_bins: int,
@@ -474,8 +511,8 @@ def PCCP_dihedral_loss(
     # [*, N_res, N_res, 1]
     dihedrals = calc_dihedral(
         atom_P[..., None, :],
-        atom_C[..., None, :],
-        atom_C[..., None, :, :],
+        C4_prime[..., None, :],
+        C4_prime[..., None, :, :],
         atom_P[..., None, :, :],
         degree=True
     )[..., None]
@@ -487,7 +524,7 @@ def PCCP_dihedral_loss(
 
     # [*, N_res, N_res]
     C_dists = torch.sum(
-        (atom_C[..., None, :] - atom_C[..., None, :, :]) ** 2,
+        (C4_prime[..., None, :] - C4_prime[..., None, :, :]) ** 2,
         dim=-1,
     )
     contact = C_dists > (max_dist ** 2)
@@ -499,6 +536,8 @@ def PCCP_dihedral_loss(
         nn.functional.one_hot(true_bins, no_bins),
     )
     # [*, N_res, N_res]
+    # todo
+    atom_mask = atom_P_mask * C4_prime_mask
     square_mask = atom_mask[..., None] * atom_mask[..., None, :]
 
     # FP16-friendly sum. Equivalent to:
@@ -520,8 +559,9 @@ def PCCP_dihedral_loss(
 def PNNP_dihedral_loss(
     logits: torch.Tensor,
     atom_P: torch.Tensor,
-    atom_N: torch.Tensor,
-    atom_mask: torch.Tensor,
+    glycos_N: torch.Tensor,
+    atom_P_mask: torch.Tensor,
+    glycos_N_mask: torch.Tensor,
     min_bin: float,
     max_bin: float,
     no_bins: int,
@@ -558,8 +598,8 @@ def PNNP_dihedral_loss(
     # [*, N_res, N_res, 1]
     dihedrals = calc_dihedral(
         atom_P[..., None, :],
-        atom_N[..., None, :],
-        atom_N[..., None, :, :],
+        glycos_N[..., None, :],
+        glycos_N[..., None, :, :],
         atom_P[..., None, :, :],
         degree=True
     )[..., None]
@@ -571,7 +611,7 @@ def PNNP_dihedral_loss(
 
     # [*, N_res, N_res]
     N_dists = torch.sum(
-        (atom_N[..., None, :] - atom_N[..., None, :, :]) ** 2,
+        (glycos_N[..., None, :] - glycos_N[..., None, :, :]) ** 2,
         dim=-1,
     )
     contact = N_dists > (max_dist ** 2)
@@ -583,6 +623,7 @@ def PNNP_dihedral_loss(
         nn.functional.one_hot(true_bins, no_bins),
     )
     # [*, N_res, N_res]
+    atom_mask = atom_P_mask * glycos_N_mask
     square_mask = atom_mask[..., None] * atom_mask[..., None, :]
 
     # FP16-friendly sum. Equivalent to:
@@ -603,8 +644,10 @@ def PNNP_dihedral_loss(
 
 def CNNC_dihedral_loss(
     logits: torch.Tensor,
-    atom_C: torch.Tensor,
-    atom_N: torch.Tensor,
+    C4_prime: torch.Tensor,
+    glycos_N: torch.Tensor,
+    C4_prime_mask: torch.Tensor,
+    glycos_N_mask: torch.Tensor,
     atom_mask: torch.Tensor,
     min_bin: float,
     max_bin: float,
@@ -641,10 +684,10 @@ def CNNC_dihedral_loss(
     )
     # [*, N_res, N_res, 1]
     dihedrals = calc_dihedral(
-        atom_C[..., None, :],
-        atom_N[..., None, :],
-        atom_N[..., None, :, :],
-        atom_C[..., None, :, :],
+        C4_prime[..., None, :],
+        glycos_N[..., None, :],
+        glycos_N[..., None, :, :],
+        C4_prime[..., None, :, :],
         degree=True
     )[..., None]
 
@@ -655,7 +698,7 @@ def CNNC_dihedral_loss(
 
     # [*, N_res, N_res]
     N_dists = torch.sum(
-        (atom_N[..., None, :] - atom_N[..., None, :, :]) ** 2,
+        (glycos_N[..., None, :] - glycos_N[..., None, :, :]) ** 2,
         dim=-1,
     )
     contact = N_dists > (max_dist ** 2)
@@ -667,6 +710,7 @@ def CNNC_dihedral_loss(
         nn.functional.one_hot(true_bins, no_bins),
     )
     # [*, N_res, N_res]
+    atom_mask = C4_prime_mask * glycos_N_mask
     square_mask = atom_mask[..., None] * atom_mask[..., None, :]
 
     # FP16-friendly sum. Equivalent to:
@@ -705,16 +749,19 @@ class GeometryLoss(nn.Module):
             "PP": lambda: distogram_loss(
                 logits=out["PP_logits"],
                 atom_position=batch["atom_P"],
+                atom_mask=batch["atom_P_mask"],
                 **{**batch, **self.config.PP},
             ),
             "CC": lambda: distogram_loss(
                 logits=out["CC_logits"],
-                atom_position=batch["atom_C"],
+                atom_position=batch["C4_prime"],
+                atom_mask=batch["C4_prime_mask"],
                 **{**batch, **self.config.CC},
             ),
             "NN": lambda: distogram_loss(
                 logits=out["NN_logits"],
-                atom_position=batch["atom_N"],
+                atom_position=batch["glycos_N"],
+                atom_mask=batch["glycos_N_mask"],
                 **{**batch, **self.config.NN},
             ),
             "PCCP": lambda: PCCP_dihedral_loss(
