@@ -1,9 +1,6 @@
 from typing import Sequence
 import argparse
 import json
-fasta_path = "/expanse/ceph/projects/itasser/jlspzw/nwentao/pdb_mmcif/pdb_RNA.fasta"
-cache_path = "/expanse/ceph/projects/itasser/jlspzw/nwentao/pdb_mmcif/mmcif_cache.json"
-
 
 CUTOFF = "2022-05-01"
 
