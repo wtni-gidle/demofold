@@ -1,6 +1,7 @@
 from typing import Sequence
 import argparse
 import json
+import logging
 
 CUTOFF = "2022-05-01"
 
@@ -46,6 +47,9 @@ def main(args):
     with open(args.val_filter_path, "w") as fp:
         fp.write("\n".join(val_chain_ids))
     
+    logging.warning(f"The number of chains for training: {len(train_chain_ids)}")
+    logging.warning(f"The number of chains for validation: {len(val_chain_ids)}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
