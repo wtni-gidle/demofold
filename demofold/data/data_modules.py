@@ -240,8 +240,8 @@ mmcif: N_res为实际的crop_size,
     但是每次都有对应的gt
     batch_idx: [idx] 样本序号
     restype: [N_res]ACGUX
-    msa: shape of [num_alignments=1, N_res] 
-        被mask之后的msa, 每个元素是0-6, 4+"X"+"-"+[mask]
+    # msa: shape of [num_alignments=1, N_res] 
+    #     被mask之后的msa, 每个元素是0-6, 4+"X"+"-"+[mask]
     true_msa: [1, N_res] 原来的msa
         每个值是ACGUX-到012345, 但是我们是单序列, 不可能有5
     bert_mask: [1, N_res] 1为被replace
@@ -260,12 +260,14 @@ mmcif: N_res为实际的crop_size,
     glycos_N: [N_res, 3]
     glycos_N_mask: [N_res]
     atom_P
+    atom_P_mask
     C4_prime
+    C4_prime_mask
     backbone_rigid_tensor: [N_res, 4, 4]
     backbone_rigid_mask: [N_res]
     use_clamped_fape: 是否使用clamped_fape
-    gt_features: None
-    no_recycling_iters
+    gt_features: None, 可能是multimer用到的
+    no_recycling_iters: 但是实际上不存在
 fasta:
     batch_idx: [idx] 样本序号
     restype: [N_res]ACGUX
