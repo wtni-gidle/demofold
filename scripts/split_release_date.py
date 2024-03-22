@@ -1,3 +1,10 @@
+"""
+直接执行, 不需要sbatch
+fasta_path="/expanse/ceph/projects/itasser/jlspzw/nwentao/pdb_mmcif/pdb_RNA.fasta"
+cache_path="/expanse/ceph/projects/itasser/jlspzw/nwentao/pdb_mmcif/mmcif_cache.json"
+train_filter_path="/expanse/ceph/projects/itasser/jlspzw/nwentao/pdb_mmcif/train_filter.txt"
+val_filter_path="/expanse/ceph/projects/itasser/jlspzw/nwentao/pdb_mmcif/val_filter.txt"
+"""
 from typing import Sequence
 import argparse
 import json
@@ -40,14 +47,15 @@ def main(args):
                 train_chain_ids.append(each)
         else:
             train_chain_ids.append(each)
-    
+
+    logging.warning(f"Writing training set to {args.train_filter_path}")
     with open(args.train_filter_path, "w") as fp:
         fp.write("\n".join(train_chain_ids))
-    
+    logging.warning(f"The number of chains for training: {len(train_chain_ids)}")
+
+    logging.warning(f"Writing validation set to {args.val_filter_path}")
     with open(args.val_filter_path, "w") as fp:
         fp.write("\n".join(val_chain_ids))
-    
-    logging.warning(f"The number of chains for training: {len(train_chain_ids)}")
     logging.warning(f"The number of chains for validation: {len(val_chain_ids)}")
 
 
