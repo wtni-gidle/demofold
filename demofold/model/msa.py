@@ -245,9 +245,7 @@ class MSAAttention(nn.Module):
             assert z is None
             biases = None
         else:    
-            m, mask_bias, z = self._prep_inputs(
-                m, z, mask, inplace_safe=inplace_safe
-            )
+            m, mask_bias, z = self._prep_inputs(m, z, mask)
     
             biases = [mask_bias]
             if z is not None:
