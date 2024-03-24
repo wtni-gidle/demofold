@@ -3,15 +3,13 @@
 #SBATCH --partition=gpu-debug
 #SBATCH --nodes=1
 #SBATCH --gpus=4
-#SBATCH --ntasks-per-node=16
-#SBATCH --mem-per-cpu=1G
+#SBATCH --ntasks-per-node=24
+#SBATCH --mem-per-cpu=4G
 #SBATCH --output="train4e2e.%j.%N.out"
 #SBATCH --error="train4e2e.%j.%N.out"
 #SBATCH --account=mia174
 #SBATCH --export=ALL
 #SBATCH -t 00:30:00
-
-# 由于有一些序列太长，极少序列没跑完
 
 # make the script stop when error (non-true exit code) occurs
 set -e
@@ -38,17 +36,17 @@ deepspeed_config_path="/expanse/projects/itasser/jlspzw/nwentao/projects/demofol
 
 mkdir -p "$output_dir"
 
-python3 train_openfold.py "$mmcif_dir" "$ss_dir" "$output_dir" \
-    --val_data_dir "$mmcif_dir" \ 
+python3 train_demofold.py "$mmcif_dir" "$ss_dir" "$output_dir" \
+    --val_data_dir "$mmcif_dir" \
     --val_ss_dir "$ss_dir" \
     --train_filter_path "$train_filter_path" \
     --val_filter_path "$val_filter_path" \
-    --precision bf16 \
     --gpus 4 --replace_sampler_ddp=True \
     --seed 4242022 \
-    --deepspeed_config_path deepspeed_config.json \
     --checkpoint_every_epoch \
-    # --resume_from_ckpt ckpt_dir/ \
     --log_performance \
     --log_lr \
-    --config_preset e2e
+    --config_preset e2e \
+    # --precision bf16 \ # V100不能用bf16
+    # --deepspeed_config_path deepspeed_config.json # deepspped和fp16不兼容，会启动bf16（不确定）
+    # --resume_from_ckpt ckpt_dir/ \

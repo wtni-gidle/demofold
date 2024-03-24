@@ -296,7 +296,7 @@ def main(args):
         callbacks.append(es)
     
     if(args.log_performance):
-        global_batch_size = args.num_nodes * args.gpus
+        global_batch_size = args.num_nodes * args.gpus * config.data.data_module.data_loaders.batch_size    # todo
         perf = PerformanceLoggingCallback(
             log_file=os.path.join(args.output_dir, "performance_log.json"),
             global_batch_size=global_batch_size,
@@ -436,7 +436,7 @@ if __name__ == "__main__":
         help="Whether to load just model weights as opposed to training state"
     )
     parser.add_argument(
-        "--log_performance", type=bool_type, default=False,
+        "--log_performance", action="store_true", default=False,
         help="Measure performance"
     )
     parser.add_argument(

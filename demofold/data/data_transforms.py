@@ -1,4 +1,4 @@
-from typing import Dict, Mapping, List
+from typing import Dict, Mapping, List, Optional
 import itertools
 from functools import reduce, wraps
 from operator import add
@@ -201,7 +201,7 @@ def get_backbone_frames(protein: TensorDict, eps=1e-8):
 def glycos_N_fn(
     restype: torch.Tensor, 
     all_atom_positions: torch.Tensor, 
-    all_atom_mask: torch.Tensor
+    all_atom_mask: Optional[torch.Tensor] = None
 ):
     """Create glycos_N features."""
     is_purine = (restype == rc.restype_order["A"]) | (restype == rc.restype_order["G"])
@@ -259,7 +259,7 @@ def make_glycos_N(protein: TensorDict):
 def make_atom(
     atom_name: str,
     all_atom_positions: torch.Tensor, 
-    all_atom_mask: torch.Tensor
+    all_atom_mask: Optional[torch.Tensor] = None
 ):
     atom_idx = rc.bb_atom_order[atom_name]
     # [..., N_res, 4, 3]

@@ -277,7 +277,12 @@ def backbone_loss(
     bb_atom_pos_pred = torch.stack((C4_prime_pred, atom_P_pred, glycos_N_pred), dim=-2).reshape(
         *pred_atom_positions.shape[:-3], -1, 3
     )
-
+    print("pred_frame:", pred_frame.shape)
+    print("gt_frame:", gt_frame.shape)
+    print("backbone_rigid_mask:", backbone_rigid_mask.shape)
+    print("bb_atom_pos_pred:", bb_atom_pos_pred.shape)
+    print("bb_atom_pos_gt:", bb_atom_pos_gt.shape)
+    print("bb_atom_mask:", bb_atom_mask.shape)
     fape_loss = compute_fape(
         pred_frame,
         gt_frame[None],
@@ -392,7 +397,7 @@ class StructureLoss(nn.Module):
             "distogram": lambda: distogram_loss(
                 logits=out["distogram_logits"],
                 atom_position=batch["glycos_N"],
-                atom_mask=batch["glycos_N_mask"]
+                atom_mask=batch["glycos_N_mask"],
                 **{**batch, **self.config.distogram},
             ),
             # todo

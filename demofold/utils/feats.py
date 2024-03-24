@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 import torch.nn as nn
 
@@ -9,7 +11,7 @@ from ..np import residue_constants as rc
 def glycos_N_fn(
     restype: torch.Tensor, 
     all_atom_positions: torch.Tensor, 
-    all_atom_mask: torch.Tensor
+    all_atom_mask: Optional[torch.Tensor] = None
 ):
     """Create glycos_N features."""
     """

@@ -205,7 +205,7 @@ config = mlc.ConfigDict({
         },
         "data_module": {
             "data_loaders": {
-                "batch_size": 1,
+                "batch_size": 6,    # todo
                 "num_workers": 16,
                 "pin_memory": True,
             },

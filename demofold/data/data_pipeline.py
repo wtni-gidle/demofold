@@ -123,7 +123,7 @@ def make_msa_features(msas: Sequence[parsers.MSA]) -> FeatureDict:
                 continue
             seen_sequences.add(sequence)
             int_msa.append(
-                [rc.restype_order_with_x_and_gap[res] for res in sequence]
+                [rc.restype_order_with_x_and_gap.get(res, rc.restype_order_with_x_and_gap["X"]) for res in sequence]
             )
 
     num_res = len(msas[0].sequences[0])
