@@ -473,7 +473,7 @@ if __name__ == "__main__":
         help="Whether to log the actual learning rate"
     )
     parser.add_argument(
-        "--config_preset", type=str, default="initial_training",
+        "--config_preset", type=str, default="e2e", # todo
         help=(
             'Config setting. Choose e.g. "initial_training", "finetuning", '
             '"model_1", etc. By default, the actual values in the config are '
