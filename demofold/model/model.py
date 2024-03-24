@@ -104,7 +104,7 @@ class DemoFold(nn.Module):
         )
 
         ss_emb = self.ss_embedder(
-            feats["ss_feat"],
+            feats["ss"],
         )
         # [*, N_res, N_res, C_z]
         z = add(z, ss_emb, inplace=inplace_safe)
