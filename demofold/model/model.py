@@ -258,6 +258,16 @@ class DemoFold(nn.Module):
 
 
 
+    def _disable_activation_checkpointing(self):
+        self.evoformer.blocks_per_ckpt = None
+
+    def _enable_activation_checkpointing(self):
+        self.evoformer.blocks_per_ckpt = (
+            self.config.evoformer_stack.blocks_per_ckpt
+        )
+
+
+
     def forward(self, batch: Dict[str, torch.Tensor]):
         """
         Args:

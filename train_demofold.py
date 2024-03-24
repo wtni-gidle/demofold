@@ -92,7 +92,7 @@ class DemoFoldWrapper(pl.LightningModule):
         if(self.ema.device != batch["restype"].device):
             self.ema.to(batch["restype"].device)
 
-        ground_truth = batch.pop('gt_features', None)
+        # ground_truth = batch.pop('gt_features', None)
 
         # Run the model
         outputs = self(batch)
@@ -123,7 +123,7 @@ class DemoFoldWrapper(pl.LightningModule):
             self.cached_weights = tensor_tree_map(clone_param, self.model.state_dict())
             self.model.load_state_dict(self.ema.state_dict()["params"])
 
-        ground_truth = batch.pop('gt_features', None)
+        # ground_truth = batch.pop('gt_features', None)
 
         # Run the model
         outputs = self(batch)

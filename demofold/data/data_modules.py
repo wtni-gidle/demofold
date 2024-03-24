@@ -422,7 +422,7 @@ class DemoFoldDataLoader(DataLoader):
 
     def _add_batch_properties(self, batch):
         """这玩意就是为了实现recycle次数的随机性"""
-        gt_features = batch.pop('gt_features', None)
+        # gt_features = batch.pop('gt_features', None)
         samples = torch.multinomial(
             self.prop_probs_tensor,
             num_samples=1,  # 1 per row
@@ -455,7 +455,7 @@ class DemoFoldDataLoader(DataLoader):
 
         resample_recycling = lambda t: t[..., :no_recycling + 1]
         batch = tensor_tree_map(resample_recycling, batch)
-        batch['gt_features'] = gt_features
+        # batch['gt_features'] = gt_features
 
         return batch
 
