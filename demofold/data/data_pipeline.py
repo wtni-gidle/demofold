@@ -156,12 +156,14 @@ def make_ss_features(ss_data: parsers.SS) -> FeatureDict:
     ss = np.concatenate(
         (ss_data.contact[..., None], 
          ss_data.prob[..., None]), 
-        axis=-1
+        axis=-1,
+        dtype=np.float32,
     )
     ss = np.concatenate(
         (ss,
          ss), 
-        axis=-1
+        axis=-1,
+        dtype=np.float32,
     )
 
     return {"ss": ss}
