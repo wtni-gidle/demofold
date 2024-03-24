@@ -325,7 +325,7 @@ class GeometryHeads(nn.Module):
         
         self.config = config
     
-    def forward(self, outputs: Dict[torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def forward(self, outputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         geom_outputs = {}
         geom_outputs["PP_logits"] = self.pp_head(outputs["pair"])
         geom_outputs["CC_logits"] = self.cc_head(outputs["pair"])
