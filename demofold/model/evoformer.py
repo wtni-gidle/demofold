@@ -580,7 +580,6 @@ class EvoformerStack(nn.Module):
                 opm_first=opm_first,
                 fuse_projection_weights=fuse_projection_weights,
                 inf=inf,
-                eps=eps,
             )
             self.blocks.append(block)
 
