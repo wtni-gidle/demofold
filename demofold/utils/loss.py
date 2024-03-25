@@ -217,10 +217,6 @@ def backbone_loss(
         [*, N_res, ]
     traj : torch.Tensor
         [no_blocks, *, N_res, 4, 4]
-    bb_atom_pos_pred
-        [no_blocks, *, N_res, bb_atom_type_num, 3]
-    bb_atom_pos_gt
-        [*, N_res, bb_atom_type_num, 3]
     pair_mask : Optional[torch.Tensor], optional
         _description_, by default None
     use_clamped_fape : Optional[torch.Tensor], optional
@@ -258,7 +254,7 @@ def backbone_loss(
     # it might be fine.
     gt_frame = Rigid.from_tensor_4x4(backbone_rigid_tensor)
     # [...]
-    batch_dims = gt_frame.shape[:-3]
+    batch_dims = gt_frame.shape[:-1]
     
     # ! 凑合着用吧...以后再改
     C4_prime, C4_prime_mask = make_atom("C4'", all_atom_positions, all_atom_mask)
@@ -273,16 +269,10 @@ def backbone_loss(
     atom_P_pred = make_atom("P", pred_atom_positions)
     restype = torch.tile(restype[None], [pred_atom_positions.shape[0]] + [1] * len(restype.shape))
     glycos_N_pred = glycos_N_fn(restype, pred_atom_positions)
-    # [no_blocks, ..., N_res, 3, 3]
+    # [no_blocks, ..., N_res * 3, 3]
     bb_atom_pos_pred = torch.stack((C4_prime_pred, atom_P_pred, glycos_N_pred), dim=-2).reshape(
         *pred_atom_positions.shape[:-3], -1, 3
     )
-    print("pred_frame:", pred_frame.shape)
-    print("gt_frame:", gt_frame.shape)
-    print("backbone_rigid_mask:", backbone_rigid_mask.shape)
-    print("bb_atom_pos_pred:", bb_atom_pos_pred.shape)
-    print("bb_atom_pos_gt:", bb_atom_pos_gt.shape)
-    print("bb_atom_mask:", bb_atom_mask.shape)
     fape_loss = compute_fape(
         pred_frame,
         gt_frame[None],
