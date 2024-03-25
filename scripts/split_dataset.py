@@ -10,7 +10,9 @@ import argparse
 import json
 import logging
 
-CUTOFF = "2022-05-01"
+DATE_CUTOFF = "2022-05-01"
+LENGTH_CUTOFF = 1000
+
 
 def parse_fasta(fasta_path) -> Sequence[str]:
     """{file_id}_{chain_id}"""
@@ -38,11 +40,13 @@ def main(args):
     train_chain_ids = []
     val_chain_ids = []
     for each in chain_ids:
-        file_id, _ = each.split("_")
+        file_id, chain_id = each.split("_")
         release_date = mmcif_cache[file_id]["header"]["release_date"]
+        length = len(mmcif_cache[file_id]["rna"][chain_id])
         if release_date != "?":
-            if release_date >= CUTOFF:
-                val_chain_ids.append(each)
+            if release_date >= DATE_CUTOFF:
+                if length < LENGTH_CUTOFF:
+                    val_chain_ids.append(each)
             else:
                 train_chain_ids.append(each)
         else:
