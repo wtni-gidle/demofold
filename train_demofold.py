@@ -244,6 +244,8 @@ def main(args):
         train=True, 
         low_prec=(str(args.precision) == "16")
     )
+    config.data.data_module.data_loaders.batch_size = args.batch_size #增加一个batch_size的选项
+
     model_module = DemoFoldWrapper(config)
 
     # region: ckpt
@@ -471,6 +473,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--log_lr", action="store_true", default=False,
         help="Whether to log the actual learning rate"
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=1
     )
     parser.add_argument(
         "--config_preset", type=str, default="e2e", # todo

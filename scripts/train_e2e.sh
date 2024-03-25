@@ -3,7 +3,7 @@
 #SBATCH --partition=gpu-debug
 #SBATCH --nodes=1
 #SBATCH --gpus=4
-#SBATCH --ntasks-per-node=24
+#SBATCH --ntasks-per-node=16
 #SBATCH --mem-per-cpu=4G
 #SBATCH --output="train4e2e.%j.%N.out"
 #SBATCH --error="train4e2e.%j.%N.out"
@@ -47,6 +47,7 @@ python3 train_demofold.py "$mmcif_dir" "$ss_dir" "$output_dir" \
     --log_performance \
     --log_lr \
     --config_preset e2e \
+    --batch_size=1
     # --precision bf16 \ # V100不能用bf16
     # --deepspeed_config_path deepspeed_config.json # deepspped和fp16不兼容，会启动bf16（不确定）
     # --resume_from_ckpt ckpt_dir/ \

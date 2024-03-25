@@ -205,7 +205,7 @@ config = mlc.ConfigDict({
         },
         "data_module": {
             "data_loaders": {
-                "batch_size": 6,    # todo
+                "batch_size": 1,    # todo
                 "num_workers": 16,
                 "pin_memory": True,
             },
@@ -437,7 +437,7 @@ config = mlc.ConfigDict({
         "masked_msa": {
             "num_classes": 4+3, 
             "eps": eps,  # 1e-8,
-            "weight": 2.0,
+            "weight": 1.0,
         },
     },
     "ema": {"decay": 0.999},
