@@ -116,17 +116,17 @@ class InputEmbedder(nn.Module):
         tf_emb_i = self.linear_tf_z_i(tf)
         tf_emb_j = self.linear_tf_z_j(tf)
         # [N_res, N_res, c_z] -> [*, N_res, N_res, c_z]
-        pos_enc_2d = self.linear_pos_2d(self.pos_2d[:n_res, :n_res])
-        pos_enc_2d = expand_first_dims(pos_enc_2d, len(tf.shape) - 2)
+        pair_emb = self.linear_pos_2d(self.pos_2d[:n_res, :n_res])
+        pair_emb = expand_first_dims(pair_emb, len(tf.shape) - 2)
         # [*, N_res, N_res, c_z]
         pair_emb = add(
-            tf_emb_i[..., None, :, :],
-            tf_emb_j[..., None, :],
+            pair_emb, 
+            tf_emb_i[..., None, :], 
             inplace=inplace_safe
         )
         pair_emb = add(
-            pair_emb,
-            pos_enc_2d,
+            pair_emb, 
+            tf_emb_j[..., None, :, :], 
             inplace=inplace_safe
         )
 

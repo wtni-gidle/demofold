@@ -11,7 +11,7 @@ import json
 import logging
 
 DATE_CUTOFF = "2022-05-01"
-LENGTH_CUTOFF = 1000
+LENGTH_CUTOFF = 800 #! 这和embedder设置的超参数有关
 
 
 def parse_fasta(fasta_path) -> Sequence[str]:
@@ -42,7 +42,12 @@ def main(args):
     for each in chain_ids:
         file_id, chain_id = each.split("_")
         release_date = mmcif_cache[file_id]["header"]["release_date"]
-        length = len(mmcif_cache[file_id]["rna"][chain_id])
+        target = []
+        for i in mmcif_cache[file_id]["rna"].keys():
+            if chain_id in i.split(","):
+                target.append(i)
+        assert len(target) == 1
+        length = len(mmcif_cache[file_id]["rna"][target[0]])
         if release_date != "?":
             if release_date >= DATE_CUTOFF:
                 if length < LENGTH_CUTOFF:

@@ -244,7 +244,8 @@ class InvariantPointAttention(nn.Module):
         # [*, H, N_res, N_res]
         pt_att = permute_final_dims(pt_att, (2, 0, 1))
 
-        if inplace_safe:
+        if False:
+        # if inplace_safe: #! 先这样, 我安装的attn_core_inplace_cuda有问题, 同样的memory efficient 核也不能用
             a += pt_att
             del pt_att
             a += square_mask.unsqueeze(-3)

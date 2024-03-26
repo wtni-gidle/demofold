@@ -47,7 +47,8 @@ python3 train_demofold.py "$mmcif_dir" "$ss_dir" "$output_dir" \
     --log_performance \
     --log_lr \
     --config_preset e2e \
-    --batch_size=1
+    --batch_size 1 \
+    --train_epoch_len 2
     # --precision bf16 \ # V100不能用bf16
     # --deepspeed_config_path deepspeed_config.json # deepspped和fp16不兼容，会启动bf16（不确定）
     # --resume_from_ckpt ckpt_dir/ \
