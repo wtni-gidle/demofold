@@ -124,7 +124,7 @@ class DemoFoldWrapper(pl.LightningModule):
             self.model.load_state_dict(self.ema.state_dict()["params"])
 
         # ground_truth = batch.pop('gt_features', None)
-        print(batch["restype"].shape[1])
+
         # Run the model
         outputs = self(batch)
         batch = tensor_tree_map(lambda t: t[..., -1], batch)

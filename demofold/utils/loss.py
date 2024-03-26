@@ -643,7 +643,6 @@ def CNNC_dihedral_loss(
     glycos_N: torch.Tensor,
     C4_prime_mask: torch.Tensor,
     glycos_N_mask: torch.Tensor,
-    atom_mask: torch.Tensor,
     min_bin: float,
     max_bin: float,
     no_bins: int,

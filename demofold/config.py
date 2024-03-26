@@ -399,7 +399,7 @@ config = mlc.ConfigDict({
             "eps": eps,  # 1e-6,
             "weight": 1.0,
         },
-        "CC": {
+        "NN": {
             "min_bin": 2.0,
             "max_bin": 18.0,
             "no_bins": 32+2,
