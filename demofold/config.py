@@ -62,8 +62,10 @@ def model_config(
     # TRAINING PRESETS
     if name == "e2e":
         c.globals.is_e2e = True
+        c.model.evoformer_stack.is_e2e = True
     elif name == "geom":
         c.globals.is_e2e = False
+        c.model.evoformer_stack.is_e2e = False
     # INFERENCE PRESETS
     else:
         raise ValueError("Invalid model name")
@@ -277,6 +279,7 @@ config = mlc.ConfigDict({
             "tune_chunk_size": tune_chunk_size,
             "inf": 1e9,
             "eps": eps,  # 1e-10,
+            "is_e2e": True,
         },
         "structure_module": {
             "c_s": c_s,

@@ -507,6 +507,7 @@ class EvoformerStack(nn.Module):
         eps: float,
         clear_cache_between_blocks: bool = False, 
         tune_chunk_size: bool = False,
+        is_e2e: bool = True, #! BUG：DDP需要确保forward函数的所有输出都被用于计算loss
         **kwargs,
     ):
         """
@@ -582,8 +583,11 @@ class EvoformerStack(nn.Module):
                 inf=inf,
             )
             self.blocks.append(block)
-
-        self.linear = Linear(c_m, c_s)
+        
+        #! BUG：DDP需要确保forward函数的所有输出都被用于计算loss
+        self.linear = None
+        if is_e2e:
+            self.linear = Linear(c_m, c_s)
 
         self.tune_chunk_size = tune_chunk_size
         self.chunk_size_tuner = None
@@ -654,6 +658,7 @@ class EvoformerStack(nn.Module):
         use_lma: bool = False,
         use_flash: bool = False,
         _mask_trans: bool = True,
+        output_s: bool = True, #! BUG：DDP需要确保forward函数的所有输出都被用于计算loss
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         assert not (self.training or torch.is_grad_enabled())
         blocks = self._prep_blocks(
@@ -683,9 +688,11 @@ class EvoformerStack(nn.Module):
             del m, z
         
         m, z = input_tensors
-        
-        s = self.linear(m[..., 0, :, :])
-        
+
+        #! BUG：DDP需要确保forward函数的所有输出都被用于计算loss
+        s = None
+        if output_s:
+            s = self.linear(m[..., 0, :, :])
         return m, z, s
 
     def forward(
@@ -700,6 +707,7 @@ class EvoformerStack(nn.Module):
         use_flash: bool = False,
         inplace_safe: bool = False,
         _mask_trans: bool = True,
+        output_s: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
@@ -754,7 +762,8 @@ class EvoformerStack(nn.Module):
             blocks_per_ckpt=blocks_per_ckpt,
         )
 
-        s = self.linear(m[..., 0, :, :])
-
+        #! BUG：DDP需要确保forward函数的所有输出都被用于计算loss
+        s = None
+        if output_s:
+            s = self.linear(m[..., 0, :, :])
         return m, z, s
-

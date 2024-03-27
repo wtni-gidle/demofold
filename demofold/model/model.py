@@ -45,6 +45,7 @@ class DemoFold(nn.Module):
         self.evoformer = EvoformerStack(
             **self.config["evoformer_stack"],
         )
+        self.structure_module = None
         if self.globals.is_e2e:
             self.structure_module = StructureModule(
                 **self.config["structure_module"],
@@ -202,6 +203,7 @@ class DemoFold(nn.Module):
                 use_deepspeed_evo_attention=self.globals.use_deepspeed_evo_attention,
                 use_lma=self.globals.use_lma,
                 _mask_trans=self.config._mask_trans,
+                output_s=self.globals.is_e2e #! BUG: DDP需要确保forward函数的所有输出都被用于计算loss
             )
 
             del input_tensors
@@ -217,13 +219,15 @@ class DemoFold(nn.Module):
                 use_flash=self.globals.use_flash,
                 inplace_safe=inplace_safe,
                 _mask_trans=self.config._mask_trans,
+                output_s=self.globals.is_e2e #! BUG: DDP需要确保forward函数的所有输出都被用于计算loss
             )
 
         # openfold这里选择前n_seq个，是因为之前有个template模块，m在序列个数维度上有所增加
         # outputs["msa"] = m[..., :n_seq, :, :]
         outputs["msa"] = m
         outputs["pair"] = z
-        outputs["single"] = s
+        if self.globals.is_e2e:
+            outputs["single"] = s   #! BUG: DDP需要确保forward函数的所有输出都被用于计算loss
 
         del z
 
