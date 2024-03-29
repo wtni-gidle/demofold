@@ -48,7 +48,8 @@ python3 train_demofold.py "$mmcif_dir" "$ss_dir" "$output_dir" \
     --log_lr \
     --config_preset geom \
     --batch_size 1 \
-    --train_epoch_len 10000
+    --train_epoch_len 5000
     # --precision bf16 \ # V100不能用bf16
     # --deepspeed_config_path deepspeed_config.json # deepspped和fp16不兼容，会启动bf16（不确定）
     # --resume_from_ckpt ckpt_dir/ \
+    # train_epoch_len太大会训练停止
