@@ -3,7 +3,8 @@
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --gpus=4
-#SBATCH --ntasks-per-node=32
+#SBATCH --ntasks-per-node=4
+#SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=4G
 #SBATCH --output="train_e2e_1.%j.%N.out"
 #SBATCH --error="train_e2e_1.%j.%N.out"
