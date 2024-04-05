@@ -211,6 +211,7 @@ class DemoFoldWrapper(pl.LightningModule):
 
         lr_scheduler = AlphaFoldLRScheduler(
             optimizer,
+            base_lr=1e-5,
             last_epoch=self.last_lr_step
         )
 

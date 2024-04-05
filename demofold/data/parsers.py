@@ -88,6 +88,8 @@ def parse_rnafold(dbn_string: str, prob_string: str) -> SS:
     prob_matrix = np.zeros((n_res, n_res), dtype=np.float32)
     prob_string = prob_string.split("\n")
     for line in prob_string:
+        if line == "":
+            continue
         words = line.split()
         i = int(words[0]) - 1
         j = int(words[1]) - 1

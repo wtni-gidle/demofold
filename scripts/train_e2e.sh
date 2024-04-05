@@ -4,8 +4,8 @@
 #SBATCH --nodes=1
 #SBATCH --gpus=4
 #SBATCH --ntasks-per-node=4
-#SBATCH --cpus-per-task=8
-#SBATCH --mem-per-cpu=4G
+#SBATCH --cpus-per-task=10
+#SBATCH --mem-per-cpu=9G
 #SBATCH --output="train_e2e_1.%j.%N.out"
 #SBATCH --error="train_e2e_1.%j.%N.out"
 #SBATCH --account=mia174
@@ -37,13 +37,13 @@ deepspeed_config_path="/expanse/projects/itasser/jlspzw/nwentao/projects/demofol
 
 mkdir -p "$output_dir"
 
-python3 train_demofold.py "$mmcif_dir" "$ss_dir" "$output_dir" \
+srun python3 train_demofold.py "$mmcif_dir" "$ss_dir" "$output_dir" \
     --val_data_dir "$mmcif_dir" \
     --val_ss_dir "$ss_dir" \
     --train_filter_path "$train_filter_path" \
     --val_filter_path "$val_filter_path" \
     --gpus 4 --replace_sampler_ddp=True \
-    --seed 4242022 \
+    --seed 42 \
     --checkpoint_every_epoch \
     --log_performance \
     --log_lr \
