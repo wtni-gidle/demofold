@@ -99,8 +99,8 @@ class InputEmbedder(nn.Module):
         """
         n_res = tf.shape[-2]
         # device
-        self.pos_1d = self.pos_1d.to(tf.device)
-        self.pos_2d = self.pos_2d.to(tf.device)
+        self.pos_1d = self.pos_1d.to(tf.device, tf.dtype)
+        self.pos_2d = self.pos_2d.to(tf.device, tf.dtype)
 
         # [*, N_res, c_m]
         tf_emb_m = self.linear_tf_m(tf)
