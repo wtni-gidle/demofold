@@ -9,7 +9,7 @@ from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.plugins.training_type import DeepSpeedPlugin, DDPPlugin
 import torch
-from pytorch_lightning.loggers import TensorBoardLogger
+# from pytorch_lightning.loggers import TensorBoardLogger
 
 from demofold.config import model_config
 from demofold.data.data_modules import DemoFoldDataModule
@@ -314,8 +314,8 @@ def main(args):
 
     # region: loggers
     loggers = []
-    tb_logger = TensorBoardLogger(os.path.join(args.output_dir, "tblogs/"), name="expr")
-    loggers.append(tb_logger)
+    # tb_logger = TensorBoardLogger(os.path.join(args.output_dir, "tblogs/"), name="expr")
+    # loggers.append(tb_logger)
     if(args.wandb):
         wdb_logger = WandbLogger(
             name=args.experiment_name,
