@@ -4,8 +4,8 @@
 #SBATCH --nodes=1
 #SBATCH --gpus=4
 #SBATCH --ntasks-per-node=4
-#SBATCH --cpus-per-task=8
-#SBATCH --mem-per-cpu=4G
+#SBATCH --cpus-per-task=10
+#SBATCH --mem-per-cpu=9G
 #SBATCH --output="train_geom_1.%j.%N.out"
 #SBATCH --error="train_geom_1.%j.%N.out"
 #SBATCH --account=mia174
@@ -23,6 +23,7 @@ eval "$__conda_setup"
 unset __conda_setup
 # <<< conda initialize <<<
 ############################################################
+export CUDA_LAUNCH_BLOCKING=1
 
 conda activate openfold
 cd /expanse/projects/itasser/jlspzw/nwentao/projects/demofold
@@ -33,24 +34,25 @@ output_dir="/expanse/ceph/projects/itasser/jlspzw/nwentao/demofold/train_geom_1/
 train_filter_path="/expanse/ceph/projects/itasser/jlspzw/nwentao/pdb_mmcif/train_filter.txt"
 val_filter_path="/expanse/ceph/projects/itasser/jlspzw/nwentao/pdb_mmcif/val_filter.txt"
 deepspeed_config_path="/expanse/projects/itasser/jlspzw/nwentao/projects/demofold/deepspeed_config.json"
+ckpt="/expanse/ceph/projects/itasser/jlspzw/nwentao/demofold/train_geom_1/checkpoints/46-58749.ckpt"
 
 
 mkdir -p "$output_dir"
 
-python3 train_demofold.py "$mmcif_dir" "$ss_dir" "$output_dir" \
+srun python3 train_demofold.py "$mmcif_dir" "$ss_dir" "$output_dir" \
     --val_data_dir "$mmcif_dir" \
     --val_ss_dir "$ss_dir" \
     --train_filter_path "$train_filter_path" \
     --val_filter_path "$val_filter_path" \
     --gpus 4 --replace_sampler_ddp=True \
-    --seed 4242022 \
+    --seed 42424 \
     --checkpoint_every_epoch \
     --log_performance \
     --log_lr \
     --config_preset geom \
     --batch_size 1 \
-    --train_epoch_len 5000
+    --train_epoch_len 5000 \
+    --resume_from_ckpt "$ckpt" \
+    # --resume_model_weights_only
     # --precision bf16 \ # V100不能用bf16
     # --deepspeed_config_path deepspeed_config.json # deepspped和fp16不兼容，会启动bf16（不确定）
-    # --resume_from_ckpt ckpt_dir/ \
-    # train_epoch_len太大会训练停止

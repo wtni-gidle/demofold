@@ -33,6 +33,7 @@ output_dir="/expanse/ceph/projects/itasser/jlspzw/nwentao/demofold/train_e2e_1/"
 train_filter_path="/expanse/ceph/projects/itasser/jlspzw/nwentao/pdb_mmcif/train_filter.txt"
 val_filter_path="/expanse/ceph/projects/itasser/jlspzw/nwentao/pdb_mmcif/val_filter.txt"
 deepspeed_config_path="/expanse/projects/itasser/jlspzw/nwentao/projects/demofold/deepspeed_config.json"
+ckpt="/expanse/ceph/projects/itasser/jlspzw/nwentao/demofold/train_e2e_1/checkpoints/57-72499.ckpt"
 
 
 mkdir -p "$output_dir"
@@ -49,7 +50,8 @@ srun python3 train_demofold.py "$mmcif_dir" "$ss_dir" "$output_dir" \
     --log_lr \
     --config_preset e2e \
     --batch_size 1 \
-    --train_epoch_len 5000
+    --train_epoch_len 5000 \
+    --resume_from_ckpt "$ckpt" \
+    # --resume_model_weights_only
     # --precision bf16 \ # V100不能用bf16
     # --deepspeed_config_path deepspeed_config.json # deepspped和fp16不兼容，会启动bf16（不确定）
-    # --resume_from_ckpt ckpt_dir/ \

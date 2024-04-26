@@ -93,6 +93,7 @@ class DemoFoldWrapper(pl.LightningModule):
         if(self.ema.device != batch["restype"].device):
             self.ema.to(batch["restype"].device)
 
+        # print(batch["batch_idx"][0, 0], batch["batch_idx"].device, flush=True)
         # ground_truth = batch.pop('gt_features', None)
 
         # Run the model
@@ -258,15 +259,15 @@ def main(args):
             sd = torch.load(args.resume_from_ckpt)
             last_global_step = int(sd['global_step'])
         model_module.resume_last_lr_step(last_global_step)
-        logging.info("Successfully loaded last lr step...")
+        logging.warning("Successfully loaded last lr step...")
     if(args.resume_from_ckpt and args.resume_model_weights_only):
         if(os.path.isdir(args.resume_from_ckpt)):
             sd = get_fp32_state_dict_from_zero_checkpoint(args.resume_from_ckpt)
         else:
             sd = torch.load(args.resume_from_ckpt)
-        sd = {k[len("module."):]:v for k,v in sd.items()}
+        # sd = {k[len("module."):]:v for k,v in sd.items()}
         import_openfold_weights_(model=model_module, state_dict=sd)
-        logging.info("Successfully loaded model weights...")
+        logging.warning("Successfully loaded model weights...")
     # endregion
 
     data_module = DemoFoldDataModule(
@@ -356,6 +357,7 @@ def main(args):
         ckpt_path = None
     else:
         ckpt_path = args.resume_from_ckpt
+        print(f"resume from ckpt: {ckpt_path}", flush=True)
 
     trainer.fit(
         model_module, 
@@ -438,7 +440,7 @@ if __name__ == "__main__":
         help="Path to a model checkpoint from which to restore training state"
     )
     parser.add_argument(
-        "--resume_model_weights_only", type=bool_type, default=False,
+        "--resume_model_weights_only", action="store_true", default=False,
         help="Whether to load just model weights as opposed to training state"
     )
     parser.add_argument(

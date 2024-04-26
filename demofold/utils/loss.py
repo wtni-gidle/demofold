@@ -503,6 +503,8 @@ def PCCP_dihedral_loss(
         no_bins,
         device=logits.device,
     )
+    boundaries[0] -= 1e-5
+    boundaries[-1] += 1e-5
     # [*, N_res, N_res, 1]
     dihedrals = calc_dihedral(
         atom_P[..., None, :],
@@ -590,6 +592,8 @@ def PNNP_dihedral_loss(
         no_bins,
         device=logits.device,
     )
+    boundaries[0] -= 1e-5
+    boundaries[-1] += 1e-5
     # [*, N_res, N_res, 1]
     dihedrals = calc_dihedral(
         atom_P[..., None, :],
@@ -676,6 +680,8 @@ def CNNC_dihedral_loss(
         no_bins,
         device=logits.device,
     )
+    boundaries[0] -= 1e-5
+    boundaries[-1] += 1e-5
     # [*, N_res, N_res, 1]
     dihedrals = calc_dihedral(
         C4_prime[..., None, :],
