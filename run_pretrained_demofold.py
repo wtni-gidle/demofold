@@ -1,12 +1,18 @@
 import argparse
 import logging
-import math
 import numpy as np
 import os
-import pickle
 import random
 import time
 import tempfile
+
+from demofold.data.data_pipeline import SSRunner
+from demofold.model.model import DemoFold
+import logging
+import os
+import argparse
+
+import time
 
 logging.basicConfig()
 logger = logging.getLogger(__file__)
@@ -29,60 +35,177 @@ from demofold.config import model_config
 from demofold.data import feature_pipeline, data_pipeline
 from demofold.utils.tensor_utils import tensor_tree_map
 
-def parse_fasta(fasta_path):
+RNAFOLD_BINARY_PATH = '/expanse/projects/itasser/jlspzw/nwentao/ss-program/ViennaRNA/2.4.18/bin/RNAfold'
+
+
+def parse_fasta(fasta_path: str):
     with open(fasta_path, "r") as fp:
-        fasta_string = fp.read()
+        fasta_string = fp.readlines()
+    desc = fasta_string[0][1:]
+    seq = fasta_string[1]
 
-    sequences = []
-    descriptions = []
-    index = -1
-    for line in fasta_string.splitlines():
-        line = line.strip()
-        if line.startswith(">"):
-            index += 1
-            file_id, chain_info = line[1:].split("|")
-            file_id = file_id.lower()
-            chain_id = chain_info.split(",")[0].split()[-1]
-            desc = "_".join([file_id, chain_id])
-            descriptions.append(desc)  # Remove the '>' at the beginning.
-            sequences.append("")
-        else:
-            sequences[index] += line
+    return desc, seq
+
+def run_ss(desc_seq_pair, ss_runner: SSRunner, output_dir):
+    """运行一个文件"""
+    desc, seq = desc_seq_pair
     
-    desc_seq_map = dict(zip(descriptions, sequences))
+    fd, fasta_path = tempfile.mkstemp(suffix=".fasta")
+    with os.fdopen(fd, 'w') as fp:
+        fp.write(f'>seq\n{seq}')
 
-    return desc_seq_map
+    try:
+        ss_runner.run(
+            fasta_path, output_dir
+        )
+    except Exception as e:
+        logging.warning(e)
+        logging.warning(f"Failed to run ss for {desc}. Skipping...")
+        os.remove(fasta_path)
+        return 
+    
+    os.remove(fasta_path)
 
-def list_files_with_extensions(dir, extensions):
-    return [f for f in os.listdir(dir) if f.endswith(extensions)]
+def generate_feature_dict(
+    tag,
+    seq,
+    ss_dir,
+    data_processor: data_pipeline.DataPipeline,
+    args,
+):
+    tmp_fasta_path = os.path.join(args.output_dir, f"tmp_{os.getpid()}.fasta")
 
+    tag = tag
+    seq = seq
+    with open(tmp_fasta_path, "w") as fp:
+        fp.write(f">{tag}\n{seq}")
+
+    feature_dict = data_processor.process_fasta(
+        fasta_path=tmp_fasta_path,
+        ss_dir=ss_dir
+    )
+
+    # Remove temporary FASTA file
+    os.remove(tmp_fasta_path)
+
+    return feature_dict
+
+def run_model(model, batch, tag):
+    with torch.no_grad():
+        logger.info(f"Running inference for {tag}...")
+        t = time.perf_counter()
+        out = model(batch)
+        inference_time = time.perf_counter() - t
+        logger.info(f"Inference time: {inference_time}")
+
+    return out
 
 def main(args):
     # Create the output directory
     os.makedirs(args.output_dir, exist_ok=True)
+    
+    config_e2e = model_config("e2e", long_sequence_inference=args.long_sequence_inference)
+    config_geom = model_config("geom", long_sequence_inference=args.long_sequence_inference)
 
-    config = model_config(args.config_preset, long_sequence_inference=args.long_sequence_inference)
     data_processor = data_pipeline.DataPipeline()
     output_dir_base = args.output_dir
     random_seed = args.data_random_seed
     if random_seed is None:
         random_seed = random.randrange(2 ** 32)
+
     np.random.seed(random_seed)
     torch.manual_seed(random_seed + 1)
-    feature_processor = feature_pipeline.FeaturePipeline(config.data)
-    if not os.path.exists(output_dir_base):
-        os.makedirs(output_dir_base)
-    if args.use_precomputed_ss is None:
-        ss_dir = os.path.join(output_dir_base, "ss")
-    else:
-        ss_dir = args.use_precomputed_ss
-    
-    tag_list = []
-    seq_list = []
-    for fasta_file in list_files_with_extensions(args.fasta_dir, (".fasta", ".fa")):
-        # Gather input sequences
-        fasta_path = os.path.join(args.fasta_dir, fasta_file)
-        with open(fasta_path, "r") as fp:
-            data = fp.read()
 
-        tags, seqs = parse_fasta(data)
+    feature_processor = feature_pipeline.FeaturePipeline(config_e2e.data)
+    ss_dir = output_dir_base
+
+    desc, seq = parse_fasta(args.fasta_path)
+    feature_dicts = {}
+
+    ss_runner = SSRunner(
+        rnafold_binary_path=RNAFOLD_BINARY_PATH
+    )
+    run_ss((desc, seq), ss_runner, output_dir=ss_dir)
+
+    feature_dict = generate_feature_dict(
+        desc,
+        seq,
+        ss_dir,
+        data_processor,
+        args,
+    )
+    processed_feature_dict = feature_processor.process_features(
+        feature_dict, mode='predict'
+    )
+    processed_feature_dict = {
+        k: torch.as_tensor(v, device=args.model_device)
+        for k, v in processed_feature_dict.items()
+    }
+
+    model_e2e = DemoFold(config_e2e)
+    model_e2e.eval()
+    sd = torch.load(args.e2e_path)
+    model_e2e.load_state_dict(sd["ema"]["params"])
+    model_e2e = model_e2e.to(args.model_device)
+    out_e2e = run_model(model_e2e, processed_feature_dict, desc)
+
+    # [n_res, 4, 3]
+    out_e2e = out_e2e["final_atom_positions"]
+    print(out_e2e.shape, flush=True)
+    out_e2e = tensor_tree_map(lambda x: np.array(x.cpu()), out_e2e)
+    # ["C4'", "P", "N1", "N9"]
+    mapping = {
+        "A": [0, 1, 3],
+        "C": [0, 1, 2],
+        "G": [0, 1, 3],
+        "U": [0, 1, 2]
+    }
+    indices_tensor = np.array([mapping[nucleotide] for nucleotide in seq])
+    result_tensor = out_e2e[indices_tensor]
+    print(result_tensor.shape)
+    np.save(os.path.join(args.output_dir, "e2e"), result_tensor)
+
+
+    model_geom = DemoFold(config_geom)
+    model_geom.eval()
+    sd = torch.load(args.geom_path)
+    model_geom.load_state_dict(sd["geom"]["params"])
+    model_geom = model_geom.to(args.model_device)
+    out_geom = run_model(model_geom, processed_feature_dict, desc)
+    
+    keys_to_extract = ["PP_logits", "CC_logits", "NN_logits", "PCCP_logits", "PNNP_logits", "CNNC_logits"]
+    out_geom = {key: out_geom[key] for key in keys_to_extract}
+    out_geom = tensor_tree_map(lambda x: np.array(x.cpu()), out_geom)
+    np.save(os.path.join(args.output_dir, "geom"), out_geom, allow_pickle=True)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "fasta_path", type=str,
+        help="Path to directory containing FASTA files, one sequence per file"
+    )
+    parser.add_argument(
+        "--output_dir", type=str, default=os.getcwd(),
+        help="""Name of the directory in which to output the prediction""",
+    )
+    parser.add_argument(
+        "--model_device", type=str, default="cpu",
+        help="""Name of the device on which to run the model. Any valid torch
+             device name is accepted (e.g. "cpu", "cuda:0")"""
+    )
+    parser.add_argument(
+        "--e2e_path", type=str
+    )
+    parser.add_argument(
+        "--geom_path", type=str
+    )
+    parser.add_argument(
+        "--data_random_seed", type=int, default=None
+    )
+    parser.add_argument(
+        "--long_sequence_inference", action="store_true", default=False,
+        help="""enable options to reduce memory usage at the cost of speed, helps longer sequences fit into GPU memory, see the README for details"""
+    )
+    args = parser.parse_args()
+    main(args)

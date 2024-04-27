@@ -1,7 +1,3 @@
-"""
-适用于少量的rna序列
-一个fasta文件只包含一个RNA序列
-"""
 from demofold.data.data_pipeline import SSRunner
 import logging
 import tempfile
