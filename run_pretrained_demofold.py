@@ -41,8 +41,8 @@ RNAFOLD_BINARY_PATH = '/expanse/projects/itasser/jlspzw/nwentao/ss-program/Vienn
 def parse_fasta(fasta_path: str):
     with open(fasta_path, "r") as fp:
         fasta_string = fp.readlines()
-    desc = fasta_string[0][1:]
-    seq = fasta_string[1]
+    desc = fasta_string[0][1:].strip()
+    seq = fasta_string[1].strip()
 
     return desc, seq
 
@@ -120,7 +120,6 @@ def main(args):
     ss_dir = output_dir_base
 
     desc, seq = parse_fasta(args.fasta_path)
-    feature_dicts = {}
 
     ss_runner = SSRunner(
         rnafold_binary_path=RNAFOLD_BINARY_PATH
@@ -142,41 +141,54 @@ def main(args):
         for k, v in processed_feature_dict.items()
     }
 
-    model_e2e = DemoFold(config_e2e)
-    model_e2e.eval()
-    sd = torch.load(args.e2e_path)
-    model_e2e.load_state_dict(sd["ema"]["params"])
-    model_e2e = model_e2e.to(args.model_device)
-    out_e2e = run_model(model_e2e, processed_feature_dict, desc)
+    for model_num in range(6):
+        model_e2e = DemoFold(config_e2e)
+        model_e2e.eval()
+        path = getattr(args, f"e2e_path_{model_num}")
+        sd = torch.load(path)
+        model_e2e.load_state_dict(sd["ema"]["params"])
+        model_e2e = model_e2e.to(args.model_device)
+        out_e2e = run_model(model_e2e, processed_feature_dict, desc)
 
-    # [n_res, 4, 3]
-    out_e2e = out_e2e["final_atom_positions"]
-    print(out_e2e.shape, flush=True)
-    out_e2e = tensor_tree_map(lambda x: np.array(x.cpu()), out_e2e)
-    # ["C4'", "P", "N1", "N9"]
-    mapping = {
-        "A": [0, 1, 3],
-        "C": [0, 1, 2],
-        "G": [0, 1, 3],
-        "U": [0, 1, 2]
-    }
-    indices_tensor = np.array([mapping[nucleotide] for nucleotide in seq])
-    result_tensor = out_e2e[indices_tensor]
-    print(result_tensor.shape)
-    np.save(os.path.join(args.output_dir, "e2e"), result_tensor)
+        # [n_res, 4, 3]
+        out_e2e = out_e2e["final_atom_positions"]
+        out_e2e = tensor_tree_map(lambda x: np.array(x.cpu()), out_e2e)
+        # ["C4'", "P", "N1", "N9"]
+        mapping = {
+            "A": [1, 0, 3],
+            "C": [1, 0, 2],
+            "G": [1, 0, 3],
+            "U": [1, 0, 2]
+        }
+        indices = [mapping[nucleotide] for nucleotide in seq]
+        sub_arrays = [out_e2e[i, ind, :] for i, ind in enumerate(indices)]
+        result_tensor = np.stack(sub_arrays, axis=0)
+        #todo注意原子顺序
+        np.save(os.path.join(args.output_dir, f"e2e_{model_num}"), result_tensor)
 
 
     model_geom = DemoFold(config_geom)
     model_geom.eval()
     sd = torch.load(args.geom_path)
-    model_geom.load_state_dict(sd["geom"]["params"])
+    model_geom.load_state_dict(sd["ema"]["params"])
     model_geom = model_geom.to(args.model_device)
     out_geom = run_model(model_geom, processed_feature_dict, desc)
     
-    keys_to_extract = ["PP_logits", "CC_logits", "NN_logits", "PCCP_logits", "PNNP_logits", "CNNC_logits"]
-    out_geom = {key: out_geom[key] for key in keys_to_extract}
+    keys_mapping = {
+        "PP_logits": "pp",
+        "CC_logits": "cc",
+        "NN_logits": "nn",
+        "PCCP_logits": "pccp",
+        "PNNP_logits": "pnnp", 
+        "CNNC_logits": "cnnc",
+    }
+    out_geom = {v: out_geom[k] for k, v in keys_mapping.items()}
+    out_geom = tensor_tree_map(lambda x: torch.softmax(x, dim=-1), out_geom)
     out_geom = tensor_tree_map(lambda x: np.array(x.cpu()), out_geom)
-    np.save(os.path.join(args.output_dir, "geom"), out_geom, allow_pickle=True)
+    #todo注意原子顺序
+    np.save(os.path.join(args.output_dir, "geo"), out_geom, allow_pickle=True)
+    
+    print("done")
 
 
 if __name__ == "__main__":
@@ -195,7 +207,22 @@ if __name__ == "__main__":
              device name is accepted (e.g. "cpu", "cuda:0")"""
     )
     parser.add_argument(
-        "--e2e_path", type=str
+        "--e2e_path_0", type=str
+    )
+    parser.add_argument(
+        "--e2e_path_1", type=str
+    )
+    parser.add_argument(
+        "--e2e_path_2", type=str
+    )
+    parser.add_argument(
+        "--e2e_path_3", type=str
+    )
+    parser.add_argument(
+        "--e2e_path_4", type=str
+    )
+    parser.add_argument(
+        "--e2e_path_5", type=str
     )
     parser.add_argument(
         "--geom_path", type=str
